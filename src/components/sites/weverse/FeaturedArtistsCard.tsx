@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
-import { FEATURED_ARTISTS, type FeaturedArtist } from "./data";
+import { type FeaturedArtist } from "./data";
+import { useWeverseApp } from "./WeverseAppProvider";
 
 function ArtistRowItem({ artist }: { artist: FeaturedArtist }) {
   return (
@@ -43,16 +44,17 @@ function ArtistRowItem({ artist }: { artist: FeaturedArtist }) {
 }
 
 export function FeaturedArtistsCard() {
+  const { allArtistsCatalog } = useWeverseApp();
   const [mobilePage, setMobilePage] = useState(0);
   const mobileCarouselRef = useRef<HTMLDivElement | null>(null);
 
   const mobileColumns = useMemo(() => {
     const cols: FeaturedArtist[][] = [];
-    for (let i = 0; i < FEATURED_ARTISTS.length; i += 4) {
-      cols.push(FEATURED_ARTISTS.slice(i, i + 4));
+    for (let i = 0; i < allArtistsCatalog.length; i += 4) {
+      cols.push(allArtistsCatalog.slice(i, i + 4));
     }
     return cols;
-  }, []);
+  }, [allArtistsCatalog]);
 
   const totalPages = mobileColumns.length;
 
@@ -80,8 +82,8 @@ export function FeaturedArtistsCard() {
         </h2>
         <div className="px-[16px]">
           <ul className="m-0 grid list-none grid-cols-2 gap-x-[16px] gap-y-[12px] p-0">
-            {FEATURED_ARTISTS.map((artist) => (
-              <li key={artist.id} className="min-w-0">
+            {allArtistsCatalog.map((artist) => (
+              <li key={`feat-desk-${artist.slug}`} className="min-w-0">
                 <ArtistRowItem artist={artist} />
               </li>
             ))}
@@ -113,7 +115,7 @@ export function FeaturedArtistsCard() {
               className="m-0 shrink-0 basis-[83.15%] snap-start list-none pl-[16px] pr-0"
             >
               {column.map((artist) => (
-                <li key={artist.id} className="mb-[12px] last:mb-0">
+                <li key={`feat-mob-${artist.slug}`} className="mb-[12px] last:mb-0">
                   <ArtistRowItem artist={artist} />
                 </li>
               ))}

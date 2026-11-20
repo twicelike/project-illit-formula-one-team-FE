@@ -316,20 +316,121 @@ interface LoginPromptModalProps {
   open: boolean;
   onClose: () => void;
   onConfirmLogin: (nickname?: string) => void;
+  onAuthLogin?: (input: { email: string; password: string }) => Promise<void>;
+  onAuthRegister?: (input: {
+    name: string;
+    email: string;
+    password: string;
+  }) => Promise<void>;
 }
 
 export function LoginPromptModal({
   open,
   onClose,
   onConfirmLogin,
+  onAuthLogin,
+  onAuthRegister,
 }: LoginPromptModalProps) {
-  const [nickname, setNickname] = useState("Weverse Fan");
+  const [mode, setMode] = useState<"login" | "register">("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [name, setName] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   if (!open) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const switchMode = (nextMode: "login" | "register") => {
+    setMode(nextMode);
+    setErrorMessage(null);
+  };
+
+  const fillQuickAccount = (presetEmail: string, presetPass = "123456") => {
+    setMode("login");
+    setEmail(presetEmail);
+    setPassword(presetPass);
+    setErrorMessage(null);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    onConfirmLogin(nickname);
+    setErrorMessage(null);
+
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail || !trimmedEmail.includes("@")) {
+      setErrorMessage("Please enter a valid email address.");
+      return;
+    }
+
+    if (mode === "register") {
+      const trimmedName = name.trim();
+      if (trimmedName.length < 2) {
+        setErrorMessage("Nickname must be at least 2 characters.");
+        return;
+      }
+      if (password.length < 6) {
+        setErrorMessage("Password must be at least 6 characters.");
+        return;
+      }
+      if (password !== confirmPassword) {
+        setErrorMessage("Passwords do not match.");
+        return;
+      }
+
+      if (onAuthRegister) {
+        setSubmitting(true);
+        try {
+          await onAuthRegister({
+            name: trimmedName,
+            email: trimmedEmail,
+            password,
+          });
+          setPassword("");
+          setConfirmPassword("");
+        } catch (err) {
+          setErrorMessage(
+            err instanceof Error
+              ? err.message
+              : "Registration failed. Please try again."
+          );
+        } finally {
+          setSubmitting(false);
+        }
+        return;
+      }
+
+      onConfirmLogin(trimmedName);
+      return;
+    }
+
+    if (!password) {
+      setErrorMessage("Please enter your password.");
+      return;
+    }
+
+    if (onAuthLogin) {
+      setSubmitting(true);
+      try {
+        await onAuthLogin({
+          email: trimmedEmail,
+          password,
+        });
+        setPassword("");
+      } catch (err) {
+        setErrorMessage(
+          err instanceof Error
+            ? err.message
+            : "Sign in failed. Please check your credentials."
+        );
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
+
+    onConfirmLogin(trimmedEmail.split("@")[0] || "Weverse Fan");
   };
 
   return (
@@ -337,60 +438,222 @@ export function LoginPromptModal({
       role="dialog"
       aria-modal="true"
       aria-label="Log in to Weverse"
-      className="fixed inset-0 z-[160] flex items-center justify-center bg-black/50 px-[16px]"
-      onClick={onClose}
+      className="fixed inset-0 z-[160] flex items-center justify-center bg-black/50 px-[16px] py-[20px]"
+      onClick={() => !submitting && onClose()}
     >
       <div
-        className="relative w-full max-w-[400px] rounded-[16px] bg-white p-[28px] text-center shadow-[0_16px_48px_rgba(0,0,0,0.22)]"
+        className="relative max-h-[92vh] w-full max-w-[430px] overflow-y-auto rounded-[18px] bg-white p-[28px] text-center shadow-[0_16px_48px_rgba(0,0,0,0.22)]"
         onClick={(e) => e.stopPropagation()}
       >
         <button
           type="button"
           onClick={onClose}
+          disabled={submitting}
           aria-label="Close login dialog"
           className="absolute right-[14px] top-[14px] flex h-[32px] w-[32px] items-center justify-center rounded-full text-[#666666] hover:bg-black/[0.04]"
         >
           <CloseIcon className="h-[18px] w-[18px]" />
         </button>
 
-        <div className="mx-auto mb-[16px] flex justify-center text-black">
+        <div className="mx-auto mb-[14px] flex justify-center text-black">
           <WeverseWordmarkIcon className="h-[22px] w-[104px]" />
         </div>
         <h2 className="m-0 text-[18px] font-bold leading-[24px] text-black">
-          Log in and connect with your artists!
+          {mode === "login"
+            ? "Weverse Account Sign In"
+            : "Create Your Weverse Account"}
         </h2>
-        <p className="mb-0 mt-[8px] text-[13px] leading-[19px] text-[#666666]">
-          Sign in locally to unlock My Communities, 350 Jelly balance, fan
-          posts, comments, and live interactive Weverse DM chat.
+        <p className="mb-0 mt-[6px] text-[13px] leading-[19px] text-[#666666]">
+          {mode === "login"
+            ? "Sign in with your Weverse account to join communities, publish posts, comment, and send fan letters."
+            : "Register a new account to join artist communities and interact with idols."}
         </p>
 
-        <form onSubmit={handleSubmit} className="mt-[20px] text-left">
-          <label
-            htmlFor="weverse-demo-nickname"
-            className="block text-[12px] font-semibold text-[#484848]"
+        {/* Login / Register Mode Switcher */}
+        <div className="mt-[16px] grid grid-cols-2 rounded-[10px] bg-[#f2f4f8] p-[4px]">
+          <button
+            type="button"
+            onClick={() => switchMode("login")}
+            className={`h-[34px] rounded-[7px] text-[13px] font-bold transition-colors ${
+              mode === "login"
+                ? "bg-white text-black shadow-[0_1px_4px_rgba(0,0,0,0.08)]"
+                : "bg-transparent text-[#666666] hover:text-black"
+            }`}
           >
-            Nickname
-          </label>
-          <input
-            id="weverse-demo-nickname"
-            name="demoNickname"
-            type="text"
-            value={nickname}
-            onChange={(e) => setNickname(e.target.value)}
-            placeholder="Enter your fan nickname"
-            className="mt-[6px] h-[42px] w-full rounded-[8px] border border-[#dcdee4] bg-[#f7f8fa] px-[12px] text-[14px] text-black outline-none focus:border-[#00cbd5] focus:bg-white"
-          />
+            Sign In
+          </button>
+          <button
+            type="button"
+            onClick={() => switchMode("register")}
+            className={`h-[34px] rounded-[7px] text-[13px] font-bold transition-colors ${
+              mode === "register"
+                ? "bg-white text-black shadow-[0_1px_4px_rgba(0,0,0,0.08)]"
+                : "bg-transparent text-[#666666] hover:text-black"
+            }`}
+          >
+            Sign Up
+          </button>
+        </div>
 
-          <div className="mt-[18px] flex flex-col gap-[8px]">
+        {errorMessage && (
+          <div
+            role="alert"
+            className="mt-[14px] rounded-[10px] border border-[#fe5b58]/30 bg-[#fff2f2] px-[12px] py-[9px] text-left text-[12px] font-medium leading-[17px] text-[#d63333]"
+          >
+            {errorMessage}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="mt-[16px] space-y-[12px] text-left">
+          {mode === "register" && (
+            <div>
+              <label
+                htmlFor="weverse-auth-name"
+                className="block text-[12px] font-semibold text-[#484848]"
+              >
+                Nickname
+              </label>
+              <input
+                id="weverse-auth-name"
+                name="name"
+                type="text"
+                required
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Enter your fan nickname (e.g. GLLIT_Vn)"
+                className="mt-[5px] h-[42px] w-full rounded-[8px] border border-[#dcdee4] bg-[#f7f8fa] px-[12px] text-[14px] text-black outline-none focus:border-[#00cbd5] focus:bg-white"
+              />
+            </div>
+          )}
+
+          <div>
+            <label
+              htmlFor="weverse-auth-email"
+              className="block text-[12px] font-semibold text-[#484848]"
+            >
+              Email
+            </label>
+            <input
+              id="weverse-auth-email"
+              name="email"
+              type="email"
+              required
+              autoComplete="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="your@email.com"
+              className="mt-[5px] h-[42px] w-full rounded-[8px] border border-[#dcdee4] bg-[#f7f8fa] px-[12px] text-[14px] text-black outline-none focus:border-[#00cbd5] focus:bg-white"
+            />
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between">
+              <label
+                htmlFor="weverse-auth-password"
+                className="block text-[12px] font-semibold text-[#484848]"
+              >
+                Password
+              </label>
+              <button
+                type="button"
+                onClick={() => setShowPassword((prev) => !prev)}
+                className="bg-transparent p-0 text-[11px] font-semibold text-[#00b8c1] hover:underline"
+              >
+                {showPassword ? "Hide" : "Show"}
+              </button>
+            </div>
+            <input
+              id="weverse-auth-password"
+              name="password"
+              type={showPassword ? "text" : "password"}
+              required
+              autoComplete={
+                mode === "login" ? "current-password" : "new-password"
+              }
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder={
+                mode === "register"
+                  ? "At least 6 characters"
+                  : "Enter your password"
+              }
+              className="mt-[5px] h-[42px] w-full rounded-[8px] border border-[#dcdee4] bg-[#f7f8fa] px-[12px] text-[14px] text-black outline-none focus:border-[#00cbd5] focus:bg-white"
+            />
+          </div>
+
+          {mode === "register" && (
+            <div>
+              <label
+                htmlFor="weverse-auth-confirm-password"
+                className="block text-[12px] font-semibold text-[#484848]"
+              >
+                Confirm Password
+              </label>
+              <input
+                id="weverse-auth-confirm-password"
+                name="confirmPassword"
+                type={showPassword ? "text" : "password"}
+                required
+                autoComplete="new-password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Re-enter your password"
+                className="mt-[5px] h-[42px] w-full rounded-[8px] border border-[#dcdee4] bg-[#f7f8fa] px-[12px] text-[14px] text-black outline-none focus:border-[#00cbd5] focus:bg-white"
+              />
+            </div>
+          )}
+
+          {mode === "login" && (
+            <div className="rounded-[10px] bg-[#f7f8fa] p-[10px]">
+              <span className="block text-[11px] font-bold text-[#666666]">
+                Quick Fill Test Accounts (Pass: 123456):
+              </span>
+              <div className="mt-[6px] flex flex-wrap gap-[6px]">
+                <button
+                  type="button"
+                  onClick={() => fillQuickAccount("fan@weverse.local")}
+                  className="rounded-[6px] border border-black/10 bg-white px-[8px] py-[4px] text-[11px] font-semibold text-[#222222] hover:border-[#00cbd5] hover:text-[#00b8c1]"
+                >
+                  Fan (GLLIT)
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    fillQuickAccount("illit.yunah@artist.weverse.local")
+                  }
+                  className="rounded-[6px] border border-black/10 bg-white px-[8px] py-[4px] text-[11px] font-semibold text-[#222222] hover:border-[#00cbd5] hover:text-[#00b8c1]"
+                >
+                  Artist (YUNAH)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => fillQuickAccount("admin@weverse.local")}
+                  className="rounded-[6px] border border-black/10 bg-white px-[8px] py-[4px] text-[11px] font-semibold text-[#222222] hover:border-[#00cbd5] hover:text-[#00b8c1]"
+                >
+                  Admin
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="pt-[4px] flex flex-col gap-[8px]">
             <button
               type="submit"
-              className="flex h-[44px] w-full items-center justify-center rounded-[8px] bg-[#00cbd5] text-[14px] font-bold text-white transition-colors hover:bg-[#00b8c1]"
+              disabled={submitting}
+              className="flex h-[44px] w-full items-center justify-center rounded-[8px] bg-[#00cbd5] text-[14px] font-bold text-white transition-colors hover:bg-[#00b8c1] disabled:opacity-60"
             >
-              Sign In to Weverse
+              {submitting
+                ? mode === "login"
+                  ? "Signing in..."
+                  : "Creating account..."
+                : mode === "login"
+                  ? "Sign In to Weverse"
+                  : "Create Account"}
             </button>
             <button
               type="button"
               onClick={onClose}
+              disabled={submitting}
               className="h-[40px] w-full rounded-[8px] border border-[#ebedf2] bg-white text-[14px] font-medium text-[#484848] hover:bg-[#f7f8fa]"
             >
               Cancel

@@ -5,11 +5,26 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
+  useMemo,
   useState,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { DM_WIDGET_ARTISTS, type DmArtistChip } from "./data";
+import {
+  authApi,
+  fandomApi,
+  getStoredTokens,
+  resolveSlugForFandomName,
+  setStoredTokens,
+  type FandomSummaryDto,
+} from "@/lib/api";
+import {
+  DM_WIDGET_ARTISTS,
+  FEATURED_ARTISTS,
+  type DmArtistChip,
+  type FeaturedArtist,
+} from "./data";
 import {
   BlackFridayModal,
   CookieConsentBar,
@@ -19,8 +34,13 @@ import {
 import { WeverseDmWidget, type DmWidgetMode } from "./WeverseDmWidget";
 
 export interface DemoUser {
+  id?: number;
   nickname: string;
   email: string;
+  avatar?: string | null;
+  role?: "FAN" | "ARTIST" | "ADMIN" | string;
+  verified?: boolean;
+  membershipTier?: string;
   jellyBalance: number;
 }
 
@@ -58,12 +78,26 @@ export interface CartItem {
 
 interface WeverseAppContextValue {
   user: DemoUser | null;
+  backendConnected: boolean;
+  fandomsBySlug: Record<string, FandomSummaryDto>;
+  allArtistsCatalog: FeaturedArtist[];
+  refreshCommunitiesFromBackend: () => Promise<void>;
+
   loginDemo: (nickname?: string) => void;
+  loginWithCredentials: (input: {
+    email: string;
+    password: string;
+  }) => Promise<void>;
+  registerWithCredentials: (input: {
+    name: string;
+    email: string;
+    password: string;
+  }) => Promise<void>;
   logoutDemo: () => void;
   addJelly: (amount: number) => void;
 
   joinedSlugs: string[];
-  toggleJoinCommunity: (slug: string) => void;
+  toggleJoinCommunity: (slug: string) => Promise<void>;
 
   likedPostIds: string[];
   toggleLikePost: (postId: string) => void;
@@ -138,10 +172,10 @@ function readClientStore(): PersistedAppState {
     cachedClientState = {
       user: parsed.user ?? null,
       joinedSlugs: Array.isArray(parsed.joinedSlugs)
-        ? parsed.joinedSlugs
+        ? Array.from(new Set(parsed.joinedSlugs))
         : DEFAULT_PERSISTED_STATE.joinedSlugs,
       likedPostIds: Array.isArray(parsed.likedPostIds)
-        ? parsed.likedPostIds
+        ? Array.from(new Set(parsed.likedPostIds))
         : [],
       postComments: parsed.postComments ?? {},
       userPosts: Array.isArray(parsed.userPosts) ? parsed.userPosts : [],
@@ -235,6 +269,11 @@ export function WeverseAppProvider({ children }: { children: ReactNode }) {
     cookieDismissed,
   } = persisted;
 
+  const [backendConnected, setBackendConnected] = useState(false);
+  const [fandomsBySlug, setFandomsBySlug] = useState<
+    Record<string, FandomSummaryDto>
+  >({});
+
   const [dmMode, setDmMode] = useState<DmWidgetMode>("closed");
   const [dmSelectedTab, setDmSelectedTab] = useState("Recommended");
   const [activeDmArtistId, setActiveDmArtistId] = useState<string | null>(null);
@@ -259,11 +298,199 @@ export function WeverseAppProvider({ children }: { children: ReactNode }) {
     }, 2600);
   }, []);
 
+  const refreshCommunitiesFromBackend = useCallback(async () => {
+    try {
+      const page = await fandomApi.discoverFandoms({ size: 100 });
+      const bySlug: Record<string, FandomSummaryDto> = {};
+      const joinedFromBe: string[] = [];
+
+      for (const fandom of page.content) {
+        const slug = resolveSlugForFandomName(fandom.name);
+        bySlug[slug] = fandom;
+        if (fandom.joined) {
+          joinedFromBe.push(slug);
+        }
+      }
+
+      setFandomsBySlug(bySlug);
+      setBackendConnected(true);
+
+      const tokens = getStoredTokens();
+      if (tokens?.accessToken) {
+        try {
+          const myComms = await fandomApi.getMyCommunities({ size: 100 });
+          const mySlugs = myComms.content.map((c) =>
+            resolveSlugForFandomName(c.fandomName)
+          );
+          updateClientStore((prev) => ({
+            ...prev,
+            joinedSlugs: Array.from(new Set([...mySlugs, ...joinedFromBe])),
+          }));
+        } catch {
+          if (joinedFromBe.length > 0) {
+            updateClientStore((prev) => ({
+              ...prev,
+              joinedSlugs: Array.from(new Set(joinedFromBe)),
+            }));
+          }
+        }
+      }
+    } catch {
+      setBackendConnected(false);
+    }
+  }, []);
+
+  // Hydrate backend session & communities on mount
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      const tokens = getStoredTokens();
+      if (tokens?.accessToken) {
+        try {
+          const profile = await authApi.getMyProfile();
+          if (active) {
+            updateClientStore((prev) => ({
+              ...prev,
+              user: {
+                id: profile.id,
+                nickname:
+                  profile.artistProfile?.stageName ||
+                  profile.name ||
+                  "Weverse Fan",
+                email: profile.email,
+                avatar:
+                  profile.artistProfile?.avatar || profile.avatar || null,
+                role: profile.role,
+                verified:
+                  profile.role?.toUpperCase() === "ARTIST" ||
+                  Boolean(profile.artistProfile?.verified),
+                membershipTier:
+                  profile.memberProfile?.membershipTier ?? "STANDARD",
+                jellyBalance:
+                  profile.memberProfile?.totalLoyaltyPoints ??
+                  prev.user?.jellyBalance ??
+                  350,
+              },
+            }));
+          }
+        } catch {
+          setStoredTokens(null);
+          if (active) {
+            updateClientStore((prev) => ({ ...prev, user: null }));
+          }
+        }
+      }
+      if (active) {
+        await refreshCommunitiesFromBackend();
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [refreshCommunitiesFromBackend]);
+
+  // Merge static catalog with any additional communities created on BE
+  const allArtistsCatalog: FeaturedArtist[] = useMemo(() => {
+    const seenSlugs = new Set<string>();
+    const dedupedBase: FeaturedArtist[] = [];
+    for (const a of FEATURED_ARTISTS) {
+      if (!seenSlugs.has(a.slug)) {
+        seenSlugs.add(a.slug);
+        dedupedBase.push(a);
+      }
+    }
+    const extras: FeaturedArtist[] = [];
+    for (const [slug, fandom] of Object.entries(fandomsBySlug)) {
+      if (!seenSlugs.has(slug)) {
+        seenSlugs.add(slug);
+        extras.push({
+          id: 10000 + fandom.id,
+          name: fandom.name,
+          slug,
+          headerImage:
+            fandom.bannerUrl || "/sites/weverse/hero/slide-15.webp",
+          logoImage:
+            fandom.bannerUrl || "/sites/weverse/artists/kep1er-logo.webp",
+          members: [fandom.name],
+          isNew: true,
+          category: "Group",
+        });
+      }
+    }
+    return [...dedupedBase, ...extras];
+  }, [fandomsBySlug]);
+
+  const finishAuthSuccess = useCallback(
+    async (nextUser: DemoUser) => {
+      updateClientStore((prev) => ({ ...prev, user: nextUser }));
+      setShowLoginModal(false);
+      showToast(`Signed in as ${nextUser.nickname}`);
+      await refreshCommunitiesFromBackend();
+      if (pendingLoginAction) {
+        const fn = pendingLoginAction;
+        setPendingLoginAction(null);
+        fn();
+      }
+    },
+    [pendingLoginAction, refreshCommunitiesFromBackend, showToast]
+  );
+
+  const loginWithCredentials = useCallback(
+    async (input: { email: string; password: string }) => {
+      const authRes = await authApi.login(input);
+      let loyaltyPoints = 350;
+      let membershipTier = "STANDARD";
+      let displayName = authRes.user.name;
+      let avatar = authRes.user.avatar ?? null;
+
+      try {
+        const profile = await authApi.getMyProfile();
+        loyaltyPoints = profile.memberProfile?.totalLoyaltyPoints ?? 350;
+        membershipTier = profile.memberProfile?.membershipTier ?? "STANDARD";
+        displayName =
+          profile.artistProfile?.stageName || profile.name || displayName;
+        avatar = profile.artistProfile?.avatar || profile.avatar || avatar;
+      } catch {
+        // Fallback to auth summary
+      }
+
+      await finishAuthSuccess({
+        id: authRes.user.id,
+        nickname: displayName,
+        email: authRes.user.email,
+        avatar,
+        role: authRes.user.role,
+        verified: authRes.user.verified,
+        membershipTier,
+        jellyBalance: loyaltyPoints,
+      });
+    },
+    [finishAuthSuccess]
+  );
+
+  const registerWithCredentials = useCallback(
+    async (input: { name: string; email: string; password: string }) => {
+      const authRes = await authApi.register(input);
+      await finishAuthSuccess({
+        id: authRes.user.id,
+        nickname: authRes.user.name,
+        email: authRes.user.email,
+        avatar: authRes.user.avatar ?? null,
+        role: authRes.user.role,
+        verified: authRes.user.verified,
+        membershipTier: "STANDARD",
+        jellyBalance: 350,
+      });
+    },
+    [finishAuthSuccess]
+  );
+
   const loginDemo = useCallback(
     (nickname = "Weverse Fan") => {
       const nextUser: DemoUser = {
         nickname: nickname.trim() || "Weverse Fan",
         email: "fan@weverse.local",
+        role: "FAN",
         jellyBalance: 350,
       };
       updateClientStore((prev) => ({ ...prev, user: nextUser }));
@@ -279,6 +506,7 @@ export function WeverseAppProvider({ children }: { children: ReactNode }) {
   );
 
   const logoutDemo = useCallback(() => {
+    void authApi.logout();
     updateClientStore((prev) => ({ ...prev, user: null }));
     setActiveDmArtistId(null);
     showToast("Signed out");
@@ -308,28 +536,57 @@ export function WeverseAppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const toggleJoinCommunity = useCallback(
-    (slug: string) => {
+    async (slug: string) => {
       if (!user) {
         openLoginModal(() => {
-          updateClientStore((prev) => ({
-            ...prev,
-            joinedSlugs: prev.joinedSlugs.includes(slug)
-              ? prev.joinedSlugs
-              : [slug, ...prev.joinedSlugs],
-          }));
+          void toggleJoinCommunity(slug);
         });
         return;
       }
+
       const exists = joinedSlugs.includes(slug);
+      const beFandom = fandomsBySlug[slug];
+
+      if (beFandom && getStoredTokens()?.accessToken) {
+        try {
+          if (exists) {
+            await fandomApi.leaveFandom(beFandom.id);
+          } else {
+            await fandomApi.joinFandom(beFandom.id);
+          }
+          setFandomsBySlug((prev) => ({
+            ...prev,
+            [slug]: {
+              ...beFandom,
+              joined: !exists,
+              memberCount: Math.max(
+                0,
+                beFandom.memberCount + (exists ? -1 : 1)
+              ),
+            },
+          }));
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : "";
+          // If backend reports already joined / not a member, sync local state gracefully
+          if (
+            !msg.toLowerCase().includes("already joined") &&
+            !msg.toLowerCase().includes("not a member")
+          ) {
+            showToast(msg || "Could not update community membership");
+            return;
+          }
+        }
+      }
+
       updateClientStore((prev) => ({
         ...prev,
         joinedSlugs: exists
           ? prev.joinedSlugs.filter((s) => s !== slug)
-          : [slug, ...prev.joinedSlugs],
+          : Array.from(new Set([slug, ...prev.joinedSlugs])),
       }));
       showToast(exists ? "Left community" : "Joined community!");
     },
-    [user, joinedSlugs, openLoginModal, showToast]
+    [user, joinedSlugs, fandomsBySlug, openLoginModal, showToast]
   );
 
   const toggleLikePost = useCallback((postId: string) => {
@@ -432,7 +689,6 @@ export function WeverseAppProvider({ children }: { children: ReactNode }) {
       [artistId]: [...(prev[artistId] ?? []), msg],
     }));
 
-    // Simulated friendly artist reply
     window.setTimeout(() => {
       const replyText =
         ARTIST_AUTO_REPLIES[
@@ -486,7 +742,13 @@ export function WeverseAppProvider({ children }: { children: ReactNode }) {
     <WeverseAppContext.Provider
       value={{
         user,
+        backendConnected,
+        fandomsBySlug,
+        allArtistsCatalog,
+        refreshCommunitiesFromBackend,
         loginDemo,
+        loginWithCredentials,
+        registerWithCredentials,
         logoutDemo,
         addJelly,
         joinedSlugs,
@@ -534,7 +796,7 @@ export function WeverseAppProvider({ children }: { children: ReactNode }) {
         onSendMessage={sendDmMessage}
       />
 
-      {/* Authentic Weverse DM Notification Modal (steps/761/media_0.png) */}
+      {/* Authentic Weverse DM Notification Modal */}
       {dmAuthNotificationArtistId && (
         <div
           role="dialog"
@@ -620,6 +882,8 @@ export function WeverseAppProvider({ children }: { children: ReactNode }) {
           setPendingLoginAction(null);
         }}
         onConfirmLogin={loginDemo}
+        onAuthLogin={loginWithCredentials}
+        onAuthRegister={registerWithCredentials}
       />
 
       {/* Subtle Toast Banner */}

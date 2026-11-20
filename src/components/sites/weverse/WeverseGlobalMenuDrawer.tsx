@@ -25,14 +25,20 @@ export function WeverseGlobalMenuDrawer({
   onClose,
   onOpenSearch,
 }: WeverseGlobalMenuDrawerProps) {
-  const { user, logoutDemo, openLoginModal, joinedSlugs, cart } =
-    useWeverseApp();
+  const {
+    user,
+    allArtistsCatalog,
+    logoutDemo,
+    openLoginModal,
+    joinedSlugs,
+    cart,
+  } = useWeverseApp();
 
   if (!open) return null;
 
-  const joinedArtists = joinedSlugs
-    .map((slug) => FEATURED_ARTISTS.find((a) => a.slug === slug))
-    .filter((a): a is (typeof FEATURED_ARTISTS)[number] => Boolean(a));
+  const joinedArtists = Array.from(new Set(joinedSlugs))
+    .map((slug) => allArtistsCatalog.find((a) => a.slug === slug))
+    .filter((a): a is (typeof allArtistsCatalog)[number] => Boolean(a));
 
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
@@ -135,7 +141,7 @@ export function WeverseGlobalMenuDrawer({
               </strong>
               <ul className="m-0 list-none space-y-[4px] p-0">
                 {joinedArtists.map((artist) => (
-                  <li key={artist.id}>
+                  <li key={`joined-${artist.slug}`}>
                     <Link
                       href={`/${artist.slug}`}
                       onClick={onClose}
@@ -179,7 +185,7 @@ export function WeverseGlobalMenuDrawer({
                 </li>
               )}
               {SIDEBAR_RECOMMENDED.map((artist) => (
-                <li key={artist.id}>
+                <li key={`rec-${artist.slug}`}>
                   <Link
                     href={`/${artist.slug}`}
                     onClick={onClose}

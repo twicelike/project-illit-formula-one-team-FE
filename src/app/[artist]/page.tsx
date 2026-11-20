@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
 import {
   getArtistBySlug,
   getCommunityDetail,
@@ -15,21 +14,15 @@ export async function generateMetadata({
 }: PageProps): Promise<Metadata> {
   const { artist: slug } = await params;
   const artist = getArtistBySlug(slug);
-  if (!artist) {
-    return { title: "Community Not Found - Weverse" };
-  }
+  const displayName = artist ? artist.name : slug.toUpperCase();
   return {
-    title: `${artist.name} - Weverse`,
-    description: `Connect with ${artist.name} and global fans on Weverse.`,
+    title: `${displayName} - Weverse`,
+    description: `Connect with ${displayName} and global fans on Weverse.`,
   };
 }
 
 export default async function ArtistCommunityPage({ params }: PageProps) {
   const { artist: slug } = await params;
-  const artist = getArtistBySlug(slug);
-  if (!artist) {
-    notFound();
-  }
-  const bundle = getCommunityDetail(artist.slug);
+  const bundle = getCommunityDetail(slug);
   return <CommunityPageClient bundle={bundle} />;
 }

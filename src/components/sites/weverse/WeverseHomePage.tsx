@@ -27,6 +27,7 @@ const SIDEBAR_RECOMMENDED = FEATURED_ARTISTS.slice(0, 4);
 export function WeverseHomePage() {
   const {
     user,
+    allArtistsCatalog,
     logoutDemo,
     joinedSlugs,
     cart,
@@ -44,9 +45,9 @@ export function WeverseHomePage() {
 
   const effectiveDesktopCollapsed = sidebarCollapsed || searchDrawerOpen;
 
-  const joinedArtists = joinedSlugs
-    .map((slug) => FEATURED_ARTISTS.find((a) => a.slug === slug))
-    .filter((a): a is (typeof FEATURED_ARTISTS)[number] => Boolean(a));
+  const joinedArtists = Array.from(new Set(joinedSlugs))
+    .map((slug) => allArtistsCatalog.find((a) => a.slug === slug))
+    .filter((a): a is (typeof allArtistsCatalog)[number] => Boolean(a));
 
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
@@ -224,7 +225,7 @@ export function WeverseHomePage() {
               )}
               <ul className="m-0 list-none space-y-[2px] p-0">
                 {joinedArtists.map((artist) => (
-                  <li key={artist.id}>
+                  <li key={`sidebar-joined-${artist.slug}`}>
                     <Link
                       href={`/${artist.slug}`}
                       title={artist.name}
@@ -284,7 +285,7 @@ export function WeverseHomePage() {
               </li>
 
               {SIDEBAR_RECOMMENDED.map((artist) => (
-                <li key={artist.id}>
+                <li key={`sidebar-rec-${artist.slug}`}>
                   <Link
                     href={`/${artist.slug}`}
                     title={artist.name}

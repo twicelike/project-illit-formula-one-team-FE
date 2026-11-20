@@ -459,7 +459,15 @@ export function getArtistBySlug(slug: string): FeaturedArtist | undefined {
 }
 
 export function getCommunityDetail(slug: string): CommunityDetailBundle {
-  const artist = getArtistBySlug(slug) ?? FEATURED_ARTISTS[7]; // Fallback to ILLIT
+  const artist: FeaturedArtist = getArtistBySlug(slug) ?? {
+    id: 999,
+    name: slug.replace(/-/g, " ").toUpperCase(),
+    slug: slug.toLowerCase(),
+    headerImage: "/sites/weverse/hero/slide-15.webp",
+    logoImage: "/sites/weverse/artists/kep1er-logo.webp",
+    members: [slug.replace(/-/g, " ").toUpperCase()],
+    category: "Group",
+  };
   const accentColor = ACCENT_COLORS[artist.slug] ?? "#00CBD5";
 
   if (artist.slug === "illit") {
