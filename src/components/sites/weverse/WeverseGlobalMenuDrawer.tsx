@@ -113,6 +113,17 @@ export function WeverseGlobalMenuDrawer({
                   <span>→</span>
                 </Link>
 
+                {user.role?.toUpperCase() === "ADMIN" && (
+                  <Link
+                    href="/admin"
+                    onClick={onClose}
+                    className="mt-[8px] flex items-center justify-between rounded-[8px] bg-[#121c2e] px-[10px] py-[8px] text-[12px] font-extrabold text-[#00cbd5] no-underline shadow-sm hover:bg-[#1e2d48]"
+                  >
+                    <span>🛡️ Admin Console</span>
+                    <span>→</span>
+                  </Link>
+                )}
+
                 <Link
                   href="/jelly"
                   onClick={onClose}

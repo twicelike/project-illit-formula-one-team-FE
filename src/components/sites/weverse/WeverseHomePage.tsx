@@ -176,6 +176,16 @@ export function WeverseHomePage() {
                   <span>→</span>
                 </Link>
 
+                {user.role?.toUpperCase() === "ADMIN" && (
+                  <Link
+                    href="/admin"
+                    className="mt-[8px] flex items-center justify-between rounded-[8px] bg-[#121c2e] px-[10px] py-[7px] text-[12px] font-extrabold text-[#00cbd5] no-underline transition-colors hover:bg-[#1e2d48]"
+                  >
+                    <span>🛡️ Admin Console</span>
+                    <span>→</span>
+                  </Link>
+                )}
+
                 <Link
                   href="/jelly"
                   className="mt-[10px] flex items-center justify-between rounded-[8px] bg-[#f7f8fa] px-[10px] py-[7px] text-[12px] font-bold text-black no-underline transition-colors hover:bg-[#dffafb]/60"

@@ -965,17 +965,19 @@ export function ProfilePageClient() {
             >
               <span>💌 My Sent Fan Letters</span>
             </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab("artist-studio")}
-              className={`flex h-[42px] w-full items-center gap-[10px] rounded-[10px] px-[12px] text-left text-[13px] font-extrabold ${
-                activeTab === "artist-studio"
-                  ? "bg-[#fce8ee] text-[#d6335a]"
-                  : "bg-transparent text-[#484848] hover:bg-black/[0.04]"
-              }`}
-            >
-              <span>🎤 Artist Studio &amp; Inbox</span>
-            </button>
+            {isArtistRole && (
+              <button
+                type="button"
+                onClick={() => setActiveTab("artist-studio")}
+                className={`flex h-[42px] w-full items-center gap-[10px] rounded-[10px] px-[12px] text-left text-[13px] font-extrabold ${
+                  activeTab === "artist-studio"
+                    ? "bg-[#fce8ee] text-[#d6335a]"
+                    : "bg-transparent text-[#484848] hover:bg-black/[0.04]"
+                }`}
+              >
+                <span>🎤 Artist Studio &amp; Inbox</span>
+              </button>
+            )}
             <Link
               href="/jelly"
               className="flex h-[42px] items-center justify-between rounded-[10px] px-[12px] text-[13px] font-semibold text-[#484848] no-underline hover:bg-black/[0.04]"
@@ -995,6 +997,15 @@ export function ProfilePageClient() {
               <ShopSquircleIcon className="h-[18px] w-[18px] text-[#666666]" />
               <span>Weverse Shop</span>
             </Link>
+            {(profile?.role?.toUpperCase() === "ADMIN" ||
+              user?.role?.toUpperCase() === "ADMIN") && (
+              <Link
+                href="/admin"
+                className="flex h-[42px] items-center gap-[8px] rounded-[10px] bg-[#121c2e] px-[12px] text-[13px] font-extrabold text-[#00cbd5] no-underline hover:bg-[#1e2d48]"
+              >
+                <span>🛡️ Admin Console</span>
+              </Link>
+            )}
           </nav>
 
           {/* My Communities in Sidebar */}
@@ -1273,17 +1284,19 @@ export function ProfilePageClient() {
                   >
                     🏛️ Joined Communities ({myCommunities.length})
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab("artist-studio")}
-                    className={`rounded-full px-[16px] py-[8px] text-[12px] font-bold transition-colors ${
-                      activeTab === "artist-studio"
-                        ? "bg-[#e9687e] text-white"
-                        : "bg-[#fce8ee] text-[#d6335a] hover:opacity-90"
-                    }`}
-                  >
-                    🎤 Artist Studio &amp; Inbox
-                  </button>
+                  {isArtistRole && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("artist-studio")}
+                      className={`rounded-full px-[16px] py-[8px] text-[12px] font-bold transition-colors ${
+                        activeTab === "artist-studio"
+                          ? "bg-[#e9687e] text-white"
+                          : "bg-[#fce8ee] text-[#d6335a] hover:opacity-90"
+                      }`}
+                    >
+                      🎤 Artist Studio &amp; Inbox
+                    </button>
+                  )}
                 </div>
               </section>
 

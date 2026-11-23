@@ -1017,3 +1017,321 @@ export const fanLetterApi = {
     await request<void>(`/fan-letters/${letterId}`, { method: "DELETE" });
   },
 };
+
+// ==================== 7. ADMIN & MODERATION CONSOLE API ====================
+
+export interface FandomMemberDto {
+  membershipId: number;
+  fandomId: number;
+  userId: number;
+  name: string;
+  avatar: string | null;
+  userRole: string;
+  fandomRole: "MEMBER" | "VIP_MEMBER" | "ARTIST" | "MODERATOR" | string;
+  verified: boolean;
+  joinedAt: string;
+}
+
+export const adminApi = {
+  // 7.1 Entertainment Companies
+  async listCompanies(): Promise<CompanyDto[]> {
+    return request<CompanyDto[]>("/companies");
+  },
+
+  async createCompany(input: {
+    name: string;
+    bio?: string | null;
+  }): Promise<CompanyDto> {
+    return request<CompanyDto>("/admin/companies", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+
+  async updateCompany(
+    companyId: number,
+    input: { name: string; bio?: string | null }
+  ): Promise<CompanyDto> {
+    return request<CompanyDto>(`/admin/companies/${companyId}`, {
+      method: "PUT",
+      body: JSON.stringify(input),
+    });
+  },
+
+  async deleteCompany(companyId: number): Promise<void> {
+    await request<void>(`/admin/companies/${companyId}`, {
+      method: "DELETE",
+    });
+  },
+
+  // 7.2 Communities (Fandoms), Artist Roster & Member Roles
+  async listFandoms(params?: {
+    status?: string;
+    companyId?: number;
+    keyword?: string;
+    page?: number;
+    size?: number;
+  }): Promise<PageResponse<FandomSummaryDto>> {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set("status", params.status);
+    if (params?.companyId != null)
+      qs.set("companyId", String(params.companyId));
+    if (params?.keyword) qs.set("keyword", params.keyword);
+    qs.set("page", String(params?.page ?? 0));
+    qs.set("size", String(params?.size ?? 50));
+    return request<PageResponse<FandomSummaryDto>>(
+      `/admin/fandoms?${qs.toString()}`
+    );
+  },
+
+  async createFandom(input: {
+    companyId: number;
+    name: string;
+    bannerUrl?: string | null;
+    status?: "ACTIVE" | "INACTIVE" | "ARCHIVED";
+  }): Promise<FandomSummaryDto> {
+    return request<FandomSummaryDto>("/admin/fandoms", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+
+  async updateFandom(
+    fandomId: number,
+    input: {
+      companyId: number;
+      name: string;
+      bannerUrl?: string | null;
+      status: "ACTIVE" | "INACTIVE" | "ARCHIVED" | string;
+    }
+  ): Promise<FandomSummaryDto> {
+    return request<FandomSummaryDto>(`/admin/fandoms/${fandomId}`, {
+      method: "PUT",
+      body: JSON.stringify(input),
+    });
+  },
+
+  async updateFandomStatus(
+    fandomId: number,
+    status: "ACTIVE" | "INACTIVE" | "ARCHIVED"
+  ): Promise<FandomSummaryDto> {
+    return request<FandomSummaryDto>(`/admin/fandoms/${fandomId}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    });
+  },
+
+  async deleteFandom(fandomId: number): Promise<void> {
+    await request<void>(`/admin/fandoms/${fandomId}`, { method: "DELETE" });
+  },
+
+  async listFandomMembers(
+    fandomId: number,
+    params?: { role?: string; page?: number; size?: number }
+  ): Promise<PageResponse<FandomMemberDto>> {
+    const qs = new URLSearchParams();
+    if (params?.role) qs.set("role", params.role);
+    qs.set("page", String(params?.page ?? 0));
+    qs.set("size", String(params?.size ?? 60));
+    return request<PageResponse<FandomMemberDto>>(
+      `/fandoms/${fandomId}/members?${qs.toString()}`
+    );
+  },
+
+  async assignArtistToFandom(
+    fandomId: number,
+    artistUserId: number
+  ): Promise<FandomMemberDto> {
+    return request<FandomMemberDto>(`/admin/fandoms/${fandomId}/artists`, {
+      method: "POST",
+      body: JSON.stringify({ artistUserId }),
+    });
+  },
+
+  async removeArtistFromFandom(
+    fandomId: number,
+    artistUserId: number
+  ): Promise<void> {
+    await request<void>(`/admin/fandoms/${fandomId}/artists/${artistUserId}`, {
+      method: "DELETE",
+    });
+  },
+
+  async updateFandomMemberRole(
+    fandomId: number,
+    userId: number,
+    role: "MEMBER" | "VIP_MEMBER" | "ARTIST" | "MODERATOR"
+  ): Promise<FandomMemberDto> {
+    return request<FandomMemberDto>(
+      `/admin/fandoms/${fandomId}/members/${userId}/role`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ role }),
+      }
+    );
+  },
+
+  async removeFandomMember(fandomId: number, userId: number): Promise<void> {
+    await request<void>(`/admin/fandoms/${fandomId}/members/${userId}`, {
+      method: "DELETE",
+    });
+  },
+
+  // 7.3 Artists Directory & Provisioning
+  async listArtists(params?: {
+    companyId?: number;
+    keyword?: string;
+    page?: number;
+    size?: number;
+  }): Promise<PageResponse<ArtistProfileDto>> {
+    const qs = new URLSearchParams();
+    if (params?.companyId != null)
+      qs.set("companyId", String(params.companyId));
+    if (params?.keyword) qs.set("keyword", params.keyword);
+    qs.set("page", String(params?.page ?? 0));
+    qs.set("size", String(params?.size ?? 60));
+    return request<PageResponse<ArtistProfileDto>>(`/artists?${qs.toString()}`);
+  },
+
+  async createArtistAccount(input: {
+    email: string;
+    name: string;
+    password: string;
+    stageName: string;
+    bio?: string | null;
+    avatar?: string | null;
+    companyId: number;
+    debutDate?: string | null;
+  }): Promise<ArtistProfileDto> {
+    return request<ArtistProfileDto>("/admin/artists", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+
+  // 7.4 Fan Letter Paper Templates
+  async listLetterTemplates(): Promise<LetterTemplateDto[]> {
+    return request<LetterTemplateDto[]>("/admin/letter-templates");
+  },
+
+  async createLetterTemplate(input: {
+    imageUrl: string;
+    isPremium?: boolean;
+    price?: number;
+    isActive?: boolean;
+  }): Promise<LetterTemplateDto> {
+    return request<LetterTemplateDto>("/admin/letter-templates", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+
+  async updateLetterTemplate(
+    templateId: number,
+    input: {
+      imageUrl: string;
+      isPremium?: boolean;
+      price?: number;
+      isActive?: boolean;
+    }
+  ): Promise<LetterTemplateDto> {
+    return request<LetterTemplateDto>(`/admin/letter-templates/${templateId}`, {
+      method: "PUT",
+      body: JSON.stringify(input),
+    });
+  },
+
+  async updateLetterTemplateStatus(
+    templateId: number,
+    isActive: boolean
+  ): Promise<LetterTemplateDto> {
+    return request<LetterTemplateDto>(
+      `/admin/letter-templates/${templateId}/status`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ isActive }),
+      }
+    );
+  },
+
+  async deleteLetterTemplate(templateId: number): Promise<void> {
+    await request<void>(`/admin/letter-templates/${templateId}`, {
+      method: "DELETE",
+    });
+  },
+
+  // 7.5 Users, Posts & Fan Letters Content Moderation
+  async listUsers(params?: {
+    role?: string;
+    page?: number;
+    size?: number;
+  }): Promise<PageResponse<UserProfileDto>> {
+    const qs = new URLSearchParams();
+    if (params?.role) qs.set("role", params.role);
+    qs.set("page", String(params?.page ?? 0));
+    qs.set("size", String(params?.size ?? 60));
+    return request<PageResponse<UserProfileDto>>(
+      `/admin/users?${qs.toString()}`
+    );
+  },
+
+  async updateUserStatus(
+    userId: number,
+    isActive: boolean
+  ): Promise<UserProfileDto> {
+    return request<UserProfileDto>(`/admin/users/${userId}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ isActive }),
+    });
+  },
+
+  async listPosts(params?: {
+    fandomId?: number;
+    status?: string;
+    page?: number;
+    size?: number;
+  }): Promise<PageResponse<PostDto>> {
+    const qs = new URLSearchParams();
+    if (params?.fandomId != null) qs.set("fandomId", String(params.fandomId));
+    if (params?.status) qs.set("status", params.status);
+    qs.set("page", String(params?.page ?? 0));
+    qs.set("size", String(params?.size ?? 60));
+    return request<PageResponse<PostDto>>(`/admin/posts?${qs.toString()}`);
+  },
+
+  async updatePostStatus(
+    postId: number,
+    status: "PUBLISHED" | "HIDDEN" | "DELETED"
+  ): Promise<PostDto> {
+    return request<PostDto>(`/admin/posts/${postId}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    });
+  },
+
+  async listFanLetters(params?: {
+    artistId?: number;
+    status?: string;
+    page?: number;
+    size?: number;
+  }): Promise<PageResponse<FanLetterDto>> {
+    const qs = new URLSearchParams();
+    if (params?.artistId != null) qs.set("artistId", String(params.artistId));
+    if (params?.status) qs.set("status", params.status);
+    qs.set("page", String(params?.page ?? 0));
+    qs.set("size", String(params?.size ?? 60));
+    return request<PageResponse<FanLetterDto>>(
+      `/admin/fan-letters?${qs.toString()}`
+    );
+  },
+
+  async updateFanLetterStatus(
+    letterId: number,
+    status: "PUBLISHED" | "HIDDEN" | "DELETED"
+  ): Promise<FanLetterDto> {
+    return request<FanLetterDto>(`/admin/fan-letters/${letterId}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    });
+  },
+};
