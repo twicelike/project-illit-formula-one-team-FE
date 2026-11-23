@@ -357,7 +357,7 @@ export function WeverseAppProvider({ children }: { children: ReactNode }) {
                   profile.artistProfile?.stageName ||
                   profile.name ||
                   "Weverse Fan",
-                email: profile.email,
+                email: profile.email ?? "",
                 avatar:
                   profile.artistProfile?.avatar || profile.avatar || null,
                 role: profile.role,

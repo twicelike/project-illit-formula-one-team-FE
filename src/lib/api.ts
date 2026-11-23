@@ -69,16 +69,52 @@ export interface ArtistProfileDto {
 
 export interface UserProfileDto {
   id: number;
-  email: string;
+  email?: string | null;
   name: string;
   avatar?: string | null;
   role: string;
+  verified?: boolean;
   totalFollower: number;
   totalFollowing: number;
-  isActive: boolean;
+  isActive?: boolean;
   createdAt?: string;
   memberProfile?: MemberProfileDto | null;
   artistProfile?: ArtistProfileDto | null;
+}
+
+export interface FollowActionDto {
+  targetUserId: number;
+  following: boolean;
+  targetTotalFollower: number;
+  myTotalFollowing: number;
+}
+
+export interface FollowStatusDto {
+  targetUserId: number;
+  following: boolean;
+  followedBy: boolean;
+  mutual: boolean;
+}
+
+export interface FollowUserDto {
+  userId: number;
+  name: string;
+  stageName?: string | null;
+  avatar?: string | null;
+  role: string;
+  verified: boolean;
+  totalFollower: number;
+  followedByMe: boolean;
+  followedAt?: string;
+}
+
+export interface ReactorDto {
+  userId: number;
+  name: string;
+  stageName?: string | null;
+  avatar?: string | null;
+  role: string;
+  verified: boolean;
 }
 
 export interface FandomSummaryDto {
@@ -544,6 +580,89 @@ export const authApi = {
   async getMyProfile(): Promise<UserProfileDto> {
     return request<UserProfileDto>("/users/me");
   },
+
+  async updateMyProfile(input: {
+    name: string;
+    avatar?: string | null;
+  }): Promise<UserProfileDto> {
+    return request<UserProfileDto>("/users/me", {
+      method: "PUT",
+      body: JSON.stringify(input),
+    });
+  },
+
+  async changeMyPassword(input: {
+    currentPassword: string;
+    newPassword: string;
+  }): Promise<void> {
+    await request<void>("/users/me/password", {
+      method: "PUT",
+      body: JSON.stringify(input),
+    });
+  },
+
+  async getPublicProfile(userId: number): Promise<UserProfileDto> {
+    return request<UserProfileDto>(`/users/${userId}`);
+  },
+
+  async getArtistDetail(userId: number): Promise<ArtistProfileDto> {
+    return request<ArtistProfileDto>(`/artists/${userId}`);
+  },
+
+  async updateMyArtistProfile(input: {
+    stageName: string;
+    bio?: string | null;
+    avatar?: string | null;
+  }): Promise<ArtistProfileDto> {
+    return request<ArtistProfileDto>("/artists/me", {
+      method: "PUT",
+      body: JSON.stringify(input),
+    });
+  },
+};
+
+// ==================== 1B. FOLLOW API ====================
+
+export const followApi = {
+  async followUser(targetUserId: number): Promise<FollowActionDto> {
+    return request<FollowActionDto>(`/users/${targetUserId}/follow`, {
+      method: "POST",
+    });
+  },
+
+  async unfollowUser(targetUserId: number): Promise<FollowActionDto> {
+    return request<FollowActionDto>(`/users/${targetUserId}/follow`, {
+      method: "DELETE",
+    });
+  },
+
+  async getFollowStatus(targetUserId: number): Promise<FollowStatusDto> {
+    return request<FollowStatusDto>(`/users/${targetUserId}/follow-status`);
+  },
+
+  async getFollowers(
+    userId: number,
+    params?: { page?: number; size?: number }
+  ): Promise<PageResponse<FollowUserDto>> {
+    const qs = new URLSearchParams();
+    qs.set("page", String(params?.page ?? 0));
+    qs.set("size", String(params?.size ?? 40));
+    return request<PageResponse<FollowUserDto>>(
+      `/users/${userId}/followers?${qs.toString()}`
+    );
+  },
+
+  async getFollowing(
+    userId: number,
+    params?: { page?: number; size?: number }
+  ): Promise<PageResponse<FollowUserDto>> {
+    const qs = new URLSearchParams();
+    qs.set("page", String(params?.page ?? 0));
+    qs.set("size", String(params?.size ?? 40));
+    return request<PageResponse<FollowUserDto>>(
+      `/users/${userId}/following?${qs.toString()}`
+    );
+  },
 };
 
 // ==================== 2. COMMUNITY HUB (FANDOMS) API ====================
@@ -653,6 +772,32 @@ export const postApi = {
     );
   },
 
+  async getUserPosts(
+    userId: number,
+    params?: { page?: number; size?: number }
+  ): Promise<PageResponse<PostDto>> {
+    const qs = new URLSearchParams();
+    qs.set("page", String(params?.page ?? 0));
+    qs.set("size", String(params?.size ?? 30));
+    return request<PageResponse<PostDto>>(
+      `/users/${userId}/posts?${qs.toString()}`
+    );
+  },
+
+  async getFollowingFeed(params?: {
+    artistOnly?: boolean;
+    hasMedia?: boolean;
+    page?: number;
+    size?: number;
+  }): Promise<PageResponse<PostDto>> {
+    const qs = new URLSearchParams();
+    if (params?.artistOnly) qs.set("artistOnly", "true");
+    if (params?.hasMedia) qs.set("hasMedia", "true");
+    qs.set("page", String(params?.page ?? 0));
+    qs.set("size", String(params?.size ?? 30));
+    return request<PageResponse<PostDto>>(`/feed/following?${qs.toString()}`);
+  },
+
   async createPost(
     fandomId: number,
     input: {
@@ -712,6 +857,18 @@ export const interactionApi = {
       {
         method: "POST",
       }
+    );
+  },
+
+  async getPostReactors(
+    postId: number,
+    params?: { page?: number; size?: number }
+  ): Promise<PageResponse<ReactorDto>> {
+    const qs = new URLSearchParams();
+    qs.set("page", String(params?.page ?? 0));
+    qs.set("size", String(params?.size ?? 40));
+    return request<PageResponse<ReactorDto>>(
+      `/posts/${postId}/reactions?${qs.toString()}`
     );
   },
 

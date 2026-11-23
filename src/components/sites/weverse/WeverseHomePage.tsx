@@ -143,19 +143,22 @@ export function WeverseHomePage() {
             ) : user ? (
               <div className="max-[1023px]:hidden">
                 <div className="flex items-center justify-between gap-[8px]">
-                  <div className="flex min-w-0 items-center gap-[8px]">
+                  <Link
+                    href="/profile"
+                    className="flex min-w-0 items-center gap-[8px] text-black no-underline hover:opacity-85"
+                  >
                     <span className="flex h-[32px] w-[32px] shrink-0 items-center justify-center rounded-full bg-[#00cbd5] text-[14px] font-extrabold text-white">
                       {user.nickname.charAt(0).toUpperCase()}
                     </span>
                     <div className="min-w-0">
-                      <strong className="block truncate text-[14px] font-bold leading-[18px] text-black">
+                      <strong className="block truncate text-[14px] font-bold leading-[18px] text-black hover:underline">
                         {user.nickname}
                       </strong>
-                      <span className="block truncate text-[11px] leading-[14px] text-[#8e8e8e]">
-                        Signed in
+                      <span className="block truncate text-[11px] leading-[14px] text-[#009ba3]">
+                        My Profile →
                       </span>
                     </div>
-                  </div>
+                  </Link>
                   <button
                     type="button"
                     onClick={logoutDemo}
@@ -164,6 +167,14 @@ export function WeverseHomePage() {
                     Log out
                   </button>
                 </div>
+
+                <Link
+                  href="/profile"
+                  className="mt-[10px] flex items-center justify-between rounded-[8px] bg-[#dffafb]/60 px-[10px] py-[7px] text-[12px] font-bold text-[#008b94] no-underline transition-colors hover:bg-[#dffafb]"
+                >
+                  <span>👤 My Profile &amp; Follow</span>
+                  <span>→</span>
+                </Link>
 
                 <Link
                   href="/jelly"

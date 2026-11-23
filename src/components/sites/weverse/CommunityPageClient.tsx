@@ -998,9 +998,18 @@ export function CommunityPageClient({
             />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-[5px]">
-                <strong className="truncate text-[14px] font-bold leading-[19px] text-black">
-                  {post.authorName}
-                </strong>
+                {bePost?.author?.id ? (
+                  <Link
+                    href={`/users/${bePost.author.id}`}
+                    className="truncate text-[14px] font-bold leading-[19px] text-black no-underline hover:underline"
+                  >
+                    {post.authorName}
+                  </Link>
+                ) : (
+                  <strong className="truncate text-[14px] font-bold leading-[19px] text-black">
+                    {post.authorName}
+                  </strong>
+                )}
                 {post.verified && (
                   <VerifiedBadgeIcon className="h-[14px] w-[14px] shrink-0" />
                 )}
@@ -1563,6 +1572,14 @@ export function CommunityPageClient({
                         </div>
                       )}
                       <p className="mb-0 mt-[4px]">{member.bio}</p>
+                      {member.userId != null && (
+                        <Link
+                          href={`/users/${member.userId}`}
+                          className="mt-[8px] inline-block rounded-full bg-white px-[10px] py-[4px] text-[11px] font-bold text-[#008b94] no-underline shadow-sm hover:bg-[#dffafb]"
+                        >
+                          View Artist Profile &amp; Follow →
+                        </Link>
+                      )}
                     </div>
                   )}
                 </li>

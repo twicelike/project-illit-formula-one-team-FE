@@ -78,19 +78,23 @@ export function WeverseGlobalMenuDrawer({
             {user ? (
               <div className="rounded-[12px] bg-[#f7f8fa] p-[12px]">
                 <div className="flex items-center justify-between gap-[8px]">
-                  <div className="flex min-w-0 items-center gap-[10px]">
+                  <Link
+                    href="/profile"
+                    onClick={onClose}
+                    className="flex min-w-0 items-center gap-[10px] text-black no-underline"
+                  >
                     <span className="flex h-[36px] w-[36px] shrink-0 items-center justify-center rounded-full bg-[#00cbd5] text-[15px] font-extrabold text-white">
                       {user.nickname.charAt(0).toUpperCase()}
                     </span>
                     <div className="min-w-0">
-                      <strong className="block truncate text-[14px] font-bold leading-[18px] text-black">
+                      <strong className="block truncate text-[14px] font-bold leading-[18px] text-black hover:underline">
                         {user.nickname}
                       </strong>
                       <span className="block truncate text-[11px] text-[#8e8e8e]">
                         {user.email}
                       </span>
                     </div>
-                  </div>
+                  </Link>
                   <button
                     type="button"
                     onClick={logoutDemo}
@@ -99,6 +103,15 @@ export function WeverseGlobalMenuDrawer({
                     Sign out
                   </button>
                 </div>
+
+                <Link
+                  href="/profile"
+                  onClick={onClose}
+                  className="mt-[10px] flex items-center justify-between rounded-[8px] bg-[#dffafb]/70 px-[10px] py-[8px] text-[12px] font-bold text-[#008b94] no-underline shadow-[0_1px_4px_rgba(0,0,0,0.04)] hover:bg-[#dffafb]"
+                >
+                  <span>👤 My Profile &amp; Settings</span>
+                  <span>→</span>
+                </Link>
 
                 <Link
                   href="/jelly"
