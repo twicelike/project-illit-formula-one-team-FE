@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   fandomApi,
   fanLetterApi,
+  followApi,
   getStoredTokens,
   interactionApi,
   postApi,
@@ -13,9 +14,11 @@ import {
   type FandomDetailDto,
   type FandomMediaGalleryItemDto,
   type FanLetterDto,
+  type FollowUserDto,
   type LetterTemplateDto,
   type MediaItemInput,
   type PostDto,
+  type ReactorDto,
   type StickerItemDto,
 } from "@/lib/api";
 import {
@@ -156,6 +159,34 @@ export function CommunityPageClient({
     "latest"
   );
   const [artistHasMediaOnly, setArtistHasMediaOnly] = useState(false);
+
+  // Follow & Following Feed states (Section 1.2)
+  const [myFollowingList, setMyFollowingList] = useState<FollowUserDto[]>([]);
+  const [myFollowersList, setMyFollowersList] = useState<FollowUserDto[]>([]);
+  const [beFollowingPosts, setBeFollowingPosts] = useState<PostDto[]>([]);
+  const [feedScope, setFeedScope] = useState<
+    "all" | "following" | "followed-artists"
+  >("all");
+  const [highlightFanScope, setHighlightFanScope] = useState<
+    "all" | "following"
+  >("all");
+  const [selectedFollowedAuthorId, setSelectedFollowedAuthorId] = useState<
+    number | null
+  >(null);
+  const [togglingFollowIds, setTogglingFollowIds] = useState<number[]>([]);
+  const [followingAllArtists, setFollowingAllArtists] = useState(false);
+  const [activeAuthorPreviewPostId, setActiveAuthorPreviewPostId] = useState<
+    string | null
+  >(null);
+  const [networkModalOpen, setNetworkModalOpen] = useState(false);
+  const [networkModalTab, setNetworkModalTab] = useState<
+    "following" | "followers"
+  >("following");
+  const [reactorsModalPostId, setReactorsModalPostId] = useState<number | null>(
+    null
+  );
+  const [reactorsList, setReactorsList] = useState<ReactorDto[]>([]);
+  const [loadingReactors, setLoadingReactors] = useState(false);
 
   // Post composer & edit states
   const [activeTab, setActiveTab] = useState<CommunityTab>("Highlight");
@@ -369,6 +400,173 @@ export function CommunityPageClient({
     void loadLettersFromBe();
   }, [loadLettersFromBe]);
 
+  // Load current user's Follow Network & Following Feed from BE
+  const loadFollowNetworkFromBe = useCallback(async () => {
+    if (!user?.id || !getStoredTokens()?.accessToken) {
+      setMyFollowingList([]);
+      setMyFollowersList([]);
+      setBeFollowingPosts([]);
+      return;
+    }
+    try {
+      const [flwngRes, flwrsRes, feedRes] = await Promise.all([
+        followApi.getFollowing(user.id, { size: 100 }).catch(() => null),
+        followApi.getFollowers(user.id, { size: 100 }).catch(() => null),
+        postApi
+          .getFollowingFeed({
+            artistOnly: feedScope === "followed-artists",
+            hasMedia: fanHasMediaOnly,
+            size: 40,
+          })
+          .catch(() => null),
+      ]);
+      if (flwngRes) {
+        setMyFollowingList(flwngRes.items ?? flwngRes.content ?? []);
+      }
+      if (flwrsRes) {
+        setMyFollowersList(flwrsRes.items ?? flwrsRes.content ?? []);
+      }
+      if (feedRes) {
+        setBeFollowingPosts(feedRes.items ?? feedRes.content ?? []);
+      }
+    } catch {
+      // Ignore when offline
+    }
+  }, [user?.id, feedScope, fanHasMediaOnly]);
+
+  useEffect(() => {
+    void loadFollowNetworkFromBe();
+  }, [loadFollowNetworkFromBe]);
+
+  const followingIdsSet = useMemo(
+    () => new Set(myFollowingList.map((u) => u.userId)),
+    [myFollowingList]
+  );
+
+  const followerIdsSet = useMemo(
+    () => new Set(myFollowersList.map((u) => u.userId)),
+    [myFollowersList]
+  );
+
+  const handleToggleFollowUser = useCallback(
+    async (
+      targetUserId: number,
+      targetName: string,
+      targetAvatar?: string | null,
+      isArtistTarget = false
+    ) => {
+      if (!user || !getStoredTokens()?.accessToken) {
+        openLoginModal(() => {
+          void handleToggleFollowUser(
+            targetUserId,
+            targetName,
+            targetAvatar,
+            isArtistTarget
+          );
+        });
+        return;
+      }
+      if (targetUserId === user.id) return;
+
+      setTogglingFollowIds((prev) => [...prev, targetUserId]);
+      try {
+        const currentlyFollowing = followingIdsSet.has(targetUserId);
+        const res = currentlyFollowing
+          ? await followApi.unfollowUser(targetUserId)
+          : await followApi.followUser(targetUserId);
+
+        if (res.following) {
+          setMyFollowingList((prev) => {
+            const exists = prev.some((u) => u.userId === targetUserId);
+            if (exists) {
+              return prev.map((u) =>
+                u.userId === targetUserId
+                  ? {
+                      ...u,
+                      followedByMe: true,
+                      totalFollower: res.targetTotalFollower,
+                    }
+                  : u
+              );
+            }
+            return [
+              {
+                userId: targetUserId,
+                name: targetName,
+                stageName: isArtistTarget ? targetName : null,
+                avatar: targetAvatar ?? null,
+                role: isArtistTarget ? "ARTIST" : "FAN",
+                verified: isArtistTarget,
+                totalFollower: res.targetTotalFollower,
+                totalFollowing: 0,
+                followedByMe: true,
+                followsMe: followerIdsSet.has(targetUserId),
+              },
+              ...prev,
+            ];
+          });
+        } else {
+          setMyFollowingList((prev) =>
+            prev.filter((u) => u.userId !== targetUserId)
+          );
+          if (selectedFollowedAuthorId === targetUserId) {
+            setSelectedFollowedAuthorId(null);
+          }
+        }
+
+        setFandomDetail((prev) =>
+          prev
+            ? {
+                ...prev,
+                artists: prev.artists.map((a) =>
+                  a.userId === targetUserId
+                    ? { ...a, followersCount: res.targetTotalFollower }
+                    : a
+                ),
+              }
+            : prev
+        );
+
+        showToast(
+          res.following
+            ? `Followed ${targetName}!`
+            : `Unfollowed ${targetName}`
+        );
+        void loadFollowNetworkFromBe();
+      } catch (err) {
+        showToast(
+          err instanceof Error ? err.message : "Could not update follow status"
+        );
+      } finally {
+        setTogglingFollowIds((prev) =>
+          prev.filter((id) => id !== targetUserId)
+        );
+      }
+    },
+    [
+      user,
+      openLoginModal,
+      followingIdsSet,
+      followerIdsSet,
+      selectedFollowedAuthorId,
+      showToast,
+      loadFollowNetworkFromBe,
+    ]
+  );
+
+  const handleOpenReactorsModal = async (bePostId: number) => {
+    setReactorsModalPostId(bePostId);
+    setLoadingReactors(true);
+    try {
+      const page = await interactionApi.getPostReactors(bePostId, { size: 50 });
+      setReactorsList(page.items ?? page.content ?? []);
+    } catch {
+      setReactorsList([]);
+    } finally {
+      setLoadingReactors(false);
+    }
+  };
+
   // Combine BE artist members with rich local member metadata
   const displayMembers = useMemo(() => {
     const beArtists: ArtistProfileDto[] = fandomDetail?.artists ?? [];
@@ -457,6 +655,212 @@ export function CommunityPageClient({
     const fromBe = beArtistPosts.map(mapBePostToCommunityPost);
     return [...fromBe, ...bundle.artistPosts];
   }, [beArtistPosts, mapBePostToCommunityPost, bundle.artistPosts]);
+
+  const allArtistsFollowed = useMemo(() => {
+    const withId = displayMembers.filter(
+      (m) => m.userId != null && m.userId !== user?.id
+    );
+    return (
+      withId.length > 0 && withId.every((m) => followingIdsSet.has(m.userId!))
+    );
+  }, [displayMembers, followingIdsSet, user?.id]);
+
+  const followedArtistsInCommunityCount = useMemo(
+    () =>
+      displayMembers.filter(
+        (m) => m.userId != null && followingIdsSet.has(m.userId)
+      ).length,
+    [displayMembers, followingIdsSet]
+  );
+
+  const handleFollowAllArtists = useCallback(async () => {
+    if (!user || !getStoredTokens()?.accessToken) {
+      openLoginModal(() => {
+        void handleFollowAllArtists();
+      });
+      return;
+    }
+    const unfollowed = displayMembers.filter(
+      (m) =>
+        m.userId != null &&
+        m.userId !== user.id &&
+        !followingIdsSet.has(m.userId)
+    );
+    if (unfollowed.length === 0) {
+      showToast(`You are already following all ${artist.name} members!`);
+      return;
+    }
+    setFollowingAllArtists(true);
+    try {
+      await Promise.all(
+        unfollowed.map((m) => followApi.followUser(m.userId!))
+      );
+      showToast(`Followed all ${artist.name} members!`);
+      await Promise.all([
+        loadFollowNetworkFromBe(),
+        loadCommunityDataFromBe(),
+      ]);
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : "Could not follow all members"
+      );
+    } finally {
+      setFollowingAllArtists(false);
+    }
+  }, [
+    user,
+    openLoginModal,
+    displayMembers,
+    followingIdsSet,
+    showToast,
+    artist.name,
+    loadFollowNetworkFromBe,
+    loadCommunityDataFromBe,
+  ]);
+
+  const followingPostsInCommunity = useMemo(() => {
+    const seenBeIds = new Set<number>();
+    const list: Array<CommunityPost & { bePost?: PostDto }> = [];
+
+    const candidateBePosts = [
+      ...beFollowingPosts,
+      ...beArtistPosts.filter(
+        (p) => p.author?.id && followingIdsSet.has(p.author.id)
+      ),
+      ...beFanPosts.filter(
+        (p) => p.author?.id && followingIdsSet.has(p.author.id)
+      ),
+    ];
+
+    for (const p of candidateBePosts) {
+      if (seenBeIds.has(p.id)) continue;
+      if (
+        p.fandomName &&
+        p.fandomName.toLowerCase() !== artist.name.toLowerCase() &&
+        beFollowingPosts.length > 0
+      ) {
+        // Keep community context focused when matching fandom exists, or allow all if none
+      }
+      seenBeIds.add(p.id);
+      list.push(mapBePostToCommunityPost(p));
+    }
+
+    return list.filter((item) => {
+      if (
+        feedScope === "followed-artists" &&
+        !item.bePost?.artistPost &&
+        item.type !== "artist"
+      ) {
+        return false;
+      }
+      if (
+        selectedFollowedAuthorId != null &&
+        item.bePost?.author?.id !== selectedFollowedAuthorId
+      ) {
+        return false;
+      }
+      if (fanHasMediaOnly && (!item.images || item.images.length === 0)) {
+        return false;
+      }
+      return true;
+    });
+  }, [
+    beFollowingPosts,
+    beArtistPosts,
+    beFanPosts,
+    followingIdsSet,
+    artist.name,
+    mapBePostToCommunityPost,
+    feedScope,
+    selectedFollowedAuthorId,
+    fanHasMediaOnly,
+  ]);
+
+  const displayedFanTabPosts = useMemo(() => {
+    if (feedScope === "following" || feedScope === "followed-artists") {
+      return followingPostsInCommunity;
+    }
+    if (selectedFollowedAuthorId != null) {
+      return combinedFanPosts.filter(
+        (p) =>
+          (p as { bePost?: PostDto }).bePost?.author?.id ===
+          selectedFollowedAuthorId
+      );
+    }
+    return combinedFanPosts;
+  }, [
+    feedScope,
+    followingPostsInCommunity,
+    selectedFollowedAuthorId,
+    combinedFanPosts,
+  ]);
+
+  const whoToFollowSuggestions = useMemo(() => {
+    const items: Array<{
+      userId: number;
+      name: string;
+      avatar: string;
+      isArtist: boolean;
+      subLabel: string;
+      followsMe: boolean;
+    }> = [];
+    const seen = new Set<number>();
+
+    for (const m of displayMembers) {
+      if (
+        m.userId != null &&
+        m.userId !== user?.id &&
+        !followingIdsSet.has(m.userId)
+      ) {
+        seen.add(m.userId);
+        items.push({
+          userId: m.userId,
+          name: m.name,
+          avatar: m.avatar,
+          isArtist: true,
+          subLabel:
+            m.followersCount != null
+              ? `${m.followersCount.toLocaleString()} followers`
+              : `Official ${artist.name} Artist`,
+          followsMe: followerIdsSet.has(m.userId),
+        });
+      }
+    }
+
+    for (const p of [...beFanPosts, ...beArtistPosts]) {
+      const aId = p.author?.id;
+      if (
+        aId &&
+        aId !== user?.id &&
+        !followingIdsSet.has(aId) &&
+        !seen.has(aId)
+      ) {
+        seen.add(aId);
+        const isArt = Boolean(p.artistPost || p.author?.verified);
+        items.push({
+          userId: aId,
+          name: p.author.stageName || p.author.name,
+          avatar: p.author.avatar || artist.logoImage,
+          isArtist: isArt,
+          subLabel: followerIdsSet.has(aId)
+            ? "Follows you · Active member"
+            : `Active in ${artist.name}`,
+          followsMe: followerIdsSet.has(aId),
+        });
+      }
+    }
+
+    return items.slice(0, 6);
+  }, [
+    displayMembers,
+    user?.id,
+    followingIdsSet,
+    followerIdsSet,
+    artist.name,
+    artist.logoImage,
+    beFanPosts,
+    beArtistPosts,
+  ]);
 
   const mapBeLetterToCard = useCallback(
     (l: FanLetterDto, idx: number): CommunityFanLetter & { beLetter: FanLetterDto } => ({
@@ -980,27 +1384,52 @@ export function CommunityPageClient({
         (bePost.author?.id === user.id || user.role?.toUpperCase() === "ADMIN")
     );
     const artistHighlight = bePost?.artistInteractions?.highlightText;
+    const authorId = bePost?.author?.id ?? null;
+    const isFollowingAuthor = Boolean(
+      authorId != null && followingIdsSet.has(authorId)
+    );
+    const authorFollowsMe = Boolean(
+      authorId != null && followerIdsSet.has(authorId)
+    );
+    const isMutualFollow = isFollowingAuthor && authorFollowsMe;
+    const isTogglingThisAuthor = Boolean(
+      authorId != null && togglingFollowIds.includes(authorId)
+    );
+    const showAuthorPreview = activeAuthorPreviewPostId === post.id;
 
     return (
       <article
         key={post.id}
-        className={`rounded-[14px] border border-black/[0.05] bg-white ${
-          compact ? "p-[14px]" : "p-[18px]"
-        }`}
+        className={`rounded-[14px] border bg-white ${
+          isFollowingAuthor
+            ? "border-[#00cbd5]/45"
+            : "border-black/[0.05]"
+        } ${compact ? "p-[14px]" : "p-[18px]"}`}
       >
-        <div className="flex items-center justify-between gap-[10px]">
+        <div className="flex flex-wrap items-center justify-between gap-[10px]">
           <div className="flex min-w-0 items-center gap-[10px]">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={post.authorAvatar}
-              alt={post.authorName}
-              className="h-[36px] w-[36px] shrink-0 rounded-full object-cover"
-            />
+            <button
+              type="button"
+              onClick={() =>
+                setActiveAuthorPreviewPostId(showAuthorPreview ? null : post.id)
+              }
+              aria-label={`Preview ${post.authorName} profile`}
+              className="relative shrink-0 rounded-full bg-transparent p-0"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={post.authorAvatar}
+                alt={post.authorName}
+                className={`h-[38px] w-[38px] shrink-0 rounded-full object-cover ${
+                  isFollowingAuthor ? "ring-2 ring-[#00cbd5]" : ""
+                }`}
+              />
+            </button>
             <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-[5px]">
-                {bePost?.author?.id ? (
+              <div className="flex flex-wrap items-center gap-[5px]">
+                {authorId ? (
                   <Link
-                    href={`/users/${bePost.author.id}`}
+                    href={`/users/${authorId}`}
                     className="truncate text-[14px] font-bold leading-[19px] text-black no-underline hover:underline"
                   >
                     {post.authorName}
@@ -1024,6 +1453,30 @@ export function CommunityPageClient({
                     </span>
                   )
                 )}
+                {isMutualFollow ? (
+                  <span className="inline-flex h-[16px] shrink-0 items-center rounded-[4px] bg-[#fce8ee] px-[6px] text-[9px] font-extrabold text-[#d6335a]">
+                    🤝 Mutual
+                  </span>
+                ) : (
+                  authorFollowsMe && (
+                    <span className="inline-flex h-[16px] shrink-0 items-center rounded-[4px] bg-[#f2f4f8] px-[6px] text-[9px] font-bold text-[#484848]">
+                      Follows You
+                    </span>
+                  )
+                )}
+                {authorId != null && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setActiveAuthorPreviewPostId(
+                        showAuthorPreview ? null : post.id
+                      )
+                    }
+                    className="rounded-full bg-[#f7f8fa] px-[7px] py-[1px] text-[10px] font-semibold text-[#666666] hover:bg-[#ebedf2] hover:text-black"
+                  >
+                    {showAuthorPreview ? "Hide Card" : "Profile Card"}
+                  </button>
+                )}
               </div>
               <span className="block text-[11px] leading-[15px] text-[#8e8e8e]">
                 {post.timestamp}
@@ -1031,28 +1484,132 @@ export function CommunityPageClient({
             </div>
           </div>
 
-          {isMyBePost && bePost && (
-            <div className="flex shrink-0 items-center gap-[6px]">
+          <div className="flex shrink-0 items-center gap-[6px]">
+            {authorId != null && authorId !== user?.id && (
               <button
                 type="button"
-                onClick={() => {
-                  setEditingPostId(bePost.id);
-                  setEditingPostText(bePost.content || "");
-                }}
-                className="rounded-[6px] bg-[#f7f8fa] px-[8px] py-[4px] text-[11px] font-semibold text-[#484848] hover:bg-[#ebedf2]"
+                disabled={isTogglingThisAuthor}
+                onClick={() =>
+                  void handleToggleFollowUser(
+                    authorId,
+                    post.authorName,
+                    post.authorAvatar,
+                    Boolean(post.verified)
+                  )
+                }
+                className={`rounded-full px-[12px] py-[5px] text-[11px] font-extrabold transition-colors ${
+                  isFollowingAuthor
+                    ? "border border-[#00cbd5] bg-[#dffafb]/60 text-[#008b94] hover:bg-[#fff2f2] hover:border-[#fe5b58] hover:text-[#d63333]"
+                    : "bg-[#00cbd5] text-white hover:bg-[#00b8c1]"
+                }`}
               >
-                Edit
+                {isFollowingAuthor
+                  ? "✓ Following"
+                  : authorFollowsMe
+                    ? "+ Follow Back"
+                    : "+ Follow"}
               </button>
-              <button
-                type="button"
-                onClick={() => void handleDeleteBePost(bePost.id)}
-                className="rounded-[6px] bg-[#fff2f2] px-[8px] py-[4px] text-[11px] font-semibold text-[#d63333] hover:bg-[#ffe4e4]"
-              >
-                Delete
-              </button>
-            </div>
-          )}
+            )}
+
+            {isMyBePost && bePost && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingPostId(bePost.id);
+                    setEditingPostText(bePost.content || "");
+                  }}
+                  className="rounded-[6px] bg-[#f7f8fa] px-[8px] py-[4px] text-[11px] font-semibold text-[#484848] hover:bg-[#ebedf2]"
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleDeleteBePost(bePost.id)}
+                  className="rounded-[6px] bg-[#fff2f2] px-[8px] py-[4px] text-[11px] font-semibold text-[#d63333] hover:bg-[#ffe4e4]"
+                >
+                  Delete
+                </button>
+              </>
+            )}
+          </div>
         </div>
+
+        {/* Interactive Author Quick-Preview Card (Popover matching Figma Screen 1) */}
+        {showAuthorPreview && authorId != null && (
+          <div className="mt-[12px] rounded-[14px] border-2 border-[#00cbd5] bg-[#121c2e] p-[14px] text-white shadow-md">
+            <div className="flex flex-wrap items-center justify-between gap-[10px]">
+              <div className="flex items-center gap-[10px]">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={post.authorAvatar}
+                  alt={post.authorName}
+                  className="h-[44px] w-[44px] rounded-full border-2 border-[#00cbd5] object-cover"
+                />
+                <div>
+                  <div className="flex flex-wrap items-center gap-[6px]">
+                    <strong className="text-[14px] font-extrabold text-white">
+                      {post.authorName}
+                    </strong>
+                    {post.verified ? (
+                      <span className="rounded-full bg-[#00cbd5] px-[8px] py-[2px] text-[9px] font-extrabold text-white">
+                        OFFICIAL ARTIST
+                      </span>
+                    ) : (
+                      <span className="rounded-full bg-[#7c3aed] px-[8px] py-[2px] text-[9px] font-extrabold text-white">
+                        👑 GLLIT MEMBERSHIP
+                      </span>
+                    )}
+                    {isMutualFollow && (
+                      <span className="rounded-full bg-[#e9687e] px-[8px] py-[2px] text-[9px] font-extrabold text-white">
+                        🤝 Mutual Follow
+                      </span>
+                    )}
+                  </div>
+                  <span className="mt-[2px] block text-[11px] text-white/75">
+                    {post.verified
+                      ? `Official ${artist.name} member on Weverse`
+                      : `Active ${artist.name} community member`}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-[8px]">
+                {authorId !== user?.id && (
+                  <button
+                    type="button"
+                    disabled={isTogglingThisAuthor}
+                    onClick={() =>
+                      void handleToggleFollowUser(
+                        authorId,
+                        post.authorName,
+                        post.authorAvatar,
+                        Boolean(post.verified)
+                      )
+                    }
+                    className={`rounded-full px-[14px] py-[6px] text-[11px] font-extrabold ${
+                      isFollowingAuthor
+                        ? "bg-white/15 text-[#00cbd5] hover:bg-white/25"
+                        : "bg-[#00cbd5] text-white hover:bg-[#00b8c1]"
+                    }`}
+                  >
+                    {isFollowingAuthor
+                      ? "✓ Following"
+                      : authorFollowsMe
+                        ? "+ Follow Back"
+                        : "+ Follow"}
+                  </button>
+                )}
+                <Link
+                  href={`/users/${authorId}`}
+                  className="rounded-full bg-white/15 px-[12px] py-[6px] text-[11px] font-bold text-white no-underline hover:bg-white/25"
+                >
+                  View Full Profile →
+                </Link>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Special Weverse Highlight Badge when Artist replied or liked */}
         {artistHighlight && (
@@ -1128,17 +1685,28 @@ export function CommunityPageClient({
           </div>
         )}
 
-        <div className="mt-[12px] flex items-center gap-[16px] border-t border-black/[0.04] pt-[10px]">
-          <button
-            type="button"
-            onClick={() => void handleTogglePostLike(post)}
-            className={`inline-flex items-center gap-[5px] bg-transparent p-0 text-[13px] font-semibold transition-colors ${
-              isLiked ? "text-[#fe5b58]" : "text-[#666666] hover:text-black"
-            }`}
-          >
-            <HeartIcon filled={isLiked} className="h-[18px] w-[18px]" />
-            <span>{formatCount(totalLikes)}</span>
-          </button>
+        <div className="mt-[12px] flex flex-wrap items-center gap-[16px] border-t border-black/[0.04] pt-[10px]">
+          <div className="inline-flex items-center gap-[6px]">
+            <button
+              type="button"
+              onClick={() => void handleTogglePostLike(post)}
+              className={`inline-flex items-center gap-[5px] bg-transparent p-0 text-[13px] font-semibold transition-colors ${
+                isLiked ? "text-[#fe5b58]" : "text-[#666666] hover:text-black"
+              }`}
+            >
+              <HeartIcon filled={isLiked} className="h-[18px] w-[18px]" />
+              <span>{formatCount(totalLikes)}</span>
+            </button>
+            {bePost && totalLikes > 0 && (
+              <button
+                type="button"
+                onClick={() => void handleOpenReactorsModal(bePost.id)}
+                className="bg-transparent p-0 text-[11px] font-semibold text-[#8e8e8e] underline hover:text-black"
+              >
+                View likes
+              </button>
+            )}
+          </div>
 
           <button
             type="button"
@@ -1521,12 +2089,40 @@ export function CommunityPageClient({
         </div>
 
         <div className="mt-[18px] border-t border-black/[0.05] pt-[14px]">
-          <h3 className="m-0 mb-[10px] text-[14px] font-bold leading-[19px] text-black">
-            Artist Members ({displayMembers.length})
-          </h3>
-          <ul className="m-0 list-none divide-y divide-black/[0.04] p-0">
+          <div className="mb-[10px] flex items-center justify-between gap-[8px]">
+            <h3 className="m-0 text-[14px] font-extrabold leading-[19px] text-black">
+              Artist Members ({displayMembers.length})
+            </h3>
+            {displayMembers.some((m) => m.userId != null) && (
+              <button
+                type="button"
+                disabled={followingAllArtists || allArtistsFollowed}
+                onClick={() => void handleFollowAllArtists()}
+                className={`rounded-full px-[10px] py-[4px] text-[11px] font-extrabold transition-colors ${
+                  allArtistsFollowed
+                    ? "bg-[#dffafb] text-[#008b94]"
+                    : "bg-[#00cbd5] text-white hover:bg-[#00b8c1]"
+                }`}
+              >
+                {allArtistsFollowed
+                  ? "✓ Following All"
+                  : followingAllArtists
+                    ? "Following..."
+                    : "+ Follow All Members"}
+              </button>
+            )}
+          </div>
+          <ul className="m-0 list-none space-y-[8px] p-0">
             {displayMembers.map((member, idx) => {
               const isOpen = expandedMember === member.name;
+              const isFollowingMember = Boolean(
+                member.userId != null && followingIdsSet.has(member.userId)
+              );
+              const isTogglingMember = Boolean(
+                member.userId != null &&
+                  togglingFollowIds.includes(member.userId)
+              );
+
               return (
                 <li
                   key={
@@ -1534,52 +2130,107 @@ export function CommunityPageClient({
                       ? `member-${member.userId}`
                       : `member-${member.name}-${idx}`
                   }
-                  className="py-[8px]"
+                  className={`rounded-[12px] border p-[10px] transition-colors ${
+                    isFollowingMember
+                      ? "border-[#00cbd5]/60 bg-[#f7f8fa]/70"
+                      : "border-black/[0.06] bg-white"
+                  }`}
                 >
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setExpandedMember(isOpen ? null : member.name)
-                    }
-                    className="flex w-full items-center justify-between gap-[10px] bg-transparent p-0 text-left"
-                  >
-                    <span className="flex min-w-0 items-center gap-[10px]">
+                  <div className="flex items-center justify-between gap-[8px]">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExpandedMember(isOpen ? null : member.name)
+                      }
+                      className="flex min-w-0 flex-1 items-center gap-[10px] bg-transparent p-0 text-left"
+                    >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={member.avatar}
                         alt={member.name}
-                        className="h-[34px] w-[34px] shrink-0 rounded-full object-cover"
+                        className="h-[36px] w-[36px] shrink-0 rounded-full object-cover"
                       />
-                      <span className="flex items-center gap-[4px] truncate text-[14px] font-semibold text-black">
-                        <span>{member.name}</span>
-                        <VerifiedBadgeIcon className="h-[13px] w-[13px] shrink-0" />
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-center gap-[4px] truncate text-[14px] font-extrabold text-black">
+                          <span>{member.name}</span>
+                          <VerifiedBadgeIcon className="h-[13px] w-[13px] shrink-0" />
+                        </span>
+                        <span className="block text-[11px] font-semibold text-[#008b94]">
+                          {member.followersCount != null
+                            ? `${member.followersCount.toLocaleString()} followers`
+                            : `Official ${artist.name} Artist`}
+                        </span>
                       </span>
-                    </span>
-                    <ChevronDownIcon
-                      className={`h-[16px] w-[16px] shrink-0 text-[#8e8e8e] transition-transform duration-150 ${
-                        isOpen ? "rotate-180" : ""
-                      }`}
-                    />
-                  </button>
+                    </button>
+
+                    <div className="flex shrink-0 items-center gap-[6px]">
+                      {member.userId != null && member.userId !== user?.id && (
+                        <button
+                          type="button"
+                          disabled={isTogglingMember}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void handleToggleFollowUser(
+                              member.userId!,
+                              member.name,
+                              member.avatar,
+                              true
+                            );
+                          }}
+                          className={`rounded-full px-[12px] py-[5px] text-[11px] font-extrabold transition-colors ${
+                            isFollowingMember
+                              ? "bg-[#dffafb] text-[#008b94] hover:bg-[#fff2f2] hover:text-[#d63333]"
+                              : "bg-[#00cbd5] text-white hover:bg-[#00b8c1]"
+                          }`}
+                        >
+                          {isFollowingMember ? "✓ Following" : "+ Follow"}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setExpandedMember(isOpen ? null : member.name)
+                        }
+                        aria-label={`Toggle ${member.name} details`}
+                        className="flex h-[24px] w-[24px] items-center justify-center rounded-full bg-transparent p-0 text-[#8e8e8e] hover:bg-black/[0.04]"
+                      >
+                        <ChevronDownIcon
+                          className={`h-[15px] w-[15px] shrink-0 transition-transform duration-150 ${
+                            isOpen ? "rotate-180" : ""
+                          }`}
+                        />
+                      </button>
+                    </div>
+                  </div>
                   {isOpen && (
                     <div className="mt-[8px] rounded-[10px] bg-[#f7f8fa] p-[10px] text-[12px] leading-[17px] text-[#484848]">
                       <div className="font-semibold text-black">
                         Birthday / Debut: {member.birthday}
                       </div>
-                      {member.followersCount != null && (
-                        <div className="mt-[2px] text-[11px] font-bold text-[#00b8c1]">
-                          {member.followersCount.toLocaleString()} followers
-                        </div>
-                      )}
                       <p className="mb-0 mt-[4px]">{member.bio}</p>
-                      {member.userId != null && (
-                        <Link
-                          href={`/users/${member.userId}`}
-                          className="mt-[8px] inline-block rounded-full bg-white px-[10px] py-[4px] text-[11px] font-bold text-[#008b94] no-underline shadow-sm hover:bg-[#dffafb]"
+                      <div className="mt-[8px] flex flex-wrap items-center gap-[6px]">
+                        {member.userId != null && (
+                          <Link
+                            href={`/users/${member.userId}`}
+                            className="inline-block rounded-full bg-white px-[10px] py-[4px] text-[11px] font-bold text-[#111111] no-underline shadow-sm hover:bg-[#dffafb]"
+                          >
+                            View Artist Profile →
+                          </Link>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setLetterTo(member.name);
+                            if (member.userId != null) {
+                              setSelectedRecipientArtistId(member.userId);
+                            }
+                            setShowLetterModal(true);
+                          }}
+                          className="rounded-full bg-[#fce8ee] px-[10px] py-[4px] text-[11px] font-bold text-[#d6335a] hover:opacity-90"
                         >
-                          View Artist Profile &amp; Follow →
-                        </Link>
-                      )}
+                          Send Fan Letter 💌
+                        </button>
+                      </div>
                     </div>
                   )}
                 </li>
@@ -1706,7 +2357,7 @@ export function CommunityPageClient({
             <h1 className="m-0 text-[48px] font-extrabold leading-[54px] tracking-[-0.02em] text-white drop-shadow-[0_2px_14px_rgba(0,0,0,0.32)] max-[900px]:text-[36px] max-[900px]:leading-[42px] max-[673px]:text-[32px] max-[673px]:leading-[38px]">
               {artist.name}
             </h1>
-            <div className="mt-[16px] flex items-center gap-[10px] max-[673px]:w-full max-[673px]:justify-center">
+            <div className="mt-[16px] flex flex-wrap items-center gap-[10px] max-[673px]:w-full max-[673px]:justify-center">
               <button
                 type="button"
                 onClick={async () => {
@@ -1722,6 +2373,27 @@ export function CommunityPageClient({
                 {isJoined && <CheckCircleIcon className="h-[16px] w-[16px]" />}
                 <span>{isJoined ? "Joined Community" : "Join Now"}</span>
               </button>
+
+              {displayMembers.some((m) => m.userId != null) && (
+                <button
+                  type="button"
+                  disabled={followingAllArtists || allArtistsFollowed}
+                  onClick={() => void handleFollowAllArtists()}
+                  className={`inline-flex h-[42px] items-center justify-center gap-[6px] rounded-full px-[20px] text-[13px] font-extrabold shadow-[0_4px_16px_rgba(0,0,0,0.18)] transition-transform active:scale-[0.98] ${
+                    allArtistsFollowed
+                      ? "bg-[#dffafb]/90 text-[#008b94]"
+                      : "bg-[#00cbd5] text-white hover:bg-[#00b8c1]"
+                  }`}
+                >
+                  <span>
+                    {allArtistsFollowed
+                      ? `✓ Following All ${displayMembers.length} Artists`
+                      : followingAllArtists
+                        ? "Following..."
+                        : `✨ Follow All ${displayMembers.length} Artists`}
+                  </span>
+                </button>
+              )}
             </div>
           </div>
         </section>
@@ -1835,12 +2507,38 @@ export function CommunityPageClient({
                 </div>
               </section>
 
-              {/* Fan Posts 2-Col Preview */}
+              {/* Fan Posts 2-Col Preview with Following Quick Filter */}
               <section className="wev-community-card p-[20px]">
-                <div className="mb-[14px] flex items-center justify-between">
-                  <h2 className="m-0 text-[16px] font-bold leading-[22px] text-black">
-                    Fan
-                  </h2>
+                <div className="mb-[14px] flex flex-wrap items-center justify-between gap-[10px]">
+                  <div className="flex flex-wrap items-center gap-[8px]">
+                    <h2 className="m-0 text-[16px] font-bold leading-[22px] text-black">
+                      Community Fan Posts
+                    </h2>
+                    <div className="flex items-center gap-[6px]">
+                      <button
+                        type="button"
+                        onClick={() => setHighlightFanScope("all")}
+                        className={`rounded-full px-[10px] py-[4px] text-[11px] font-bold ${
+                          highlightFanScope === "all"
+                            ? "bg-black text-white"
+                            : "bg-[#f2f4f8] text-[#484848]"
+                        }`}
+                      >
+                        All Posts
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setHighlightFanScope("following")}
+                        className={`rounded-full px-[10px] py-[4px] text-[11px] font-bold ${
+                          highlightFanScope === "following"
+                            ? "bg-[#00cbd5] text-white"
+                            : "bg-[#dffafb] text-[#008b94]"
+                        }`}
+                      >
+                        ✨ Following Only ({followingPostsInCommunity.length})
+                      </button>
+                    </div>
+                  </div>
                   <div className="flex items-center gap-[12px]">
                     <button
                       type="button"
@@ -1863,11 +2561,23 @@ export function CommunityPageClient({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-[12px] max-[673px]:grid-cols-1">
-                  {combinedFanPosts
-                    .slice(0, 2)
-                    .map((post) => renderPostCard(post, true))}
-                </div>
+                {highlightFanScope === "following" &&
+                followingPostsInCommunity.length === 0 ? (
+                  <div className="rounded-[12px] bg-[#f7f8fa] p-[20px] text-center text-[13px] text-[#666666]">
+                    No posts from people you follow yet. Follow{" "}
+                    <strong>{artist.name}</strong> members or fellow fans using
+                    the <strong>+ Follow</strong> buttons!
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-[12px] max-[673px]:grid-cols-1">
+                    {(highlightFanScope === "following"
+                      ? followingPostsInCommunity
+                      : combinedFanPosts
+                    )
+                      .slice(0, 2)
+                      .map((post) => renderPostCard(post, true))}
+                  </div>
+                )}
               </section>
 
               {/* Merch Row */}
@@ -2094,20 +2804,91 @@ export function CommunityPageClient({
         ) : (
           <main className="mx-auto max-w-[1100px] px-[20px] pb-[96px] pt-[20px] max-[673px]:px-[16px]">
             {activeTab === "Fan" && (
-              <div className="mx-auto max-w-[760px] space-y-[16px]">
-                <div className="wev-community-card p-[18px]">
-                  <div className="flex flex-wrap items-center justify-between gap-[10px]">
-                    <div>
-                      <h2 className="m-0 text-[17px] font-bold text-black">
-                        Fan Feed ({combinedFanPosts.length})
-                      </h2>
-                      <div className="mt-[8px] flex flex-wrap items-center gap-[6px]">
+              <div className="grid grid-cols-[1fr_356px] items-start gap-[22px] max-[960px]:grid-cols-1">
+                {/* LEFT COLUMN: Feed Filter Bar, Followed People Strip & Timeline */}
+                <div className="min-w-0 space-y-[16px]">
+                  <div
+                    className={`wev-community-card p-[20px] ${
+                      feedScope !== "all" ? "border-2 border-[#00cbd5]" : ""
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-[10px]">
+                      <div>
+                        <h2 className="m-0 text-[18px] font-extrabold text-black">
+                          {feedScope === "all"
+                            ? `Community Feed (${displayedFanTabPosts.length})`
+                            : feedScope === "followed-artists"
+                              ? `🎤 Followed Artists in ${artist.name} (${displayedFanTabPosts.length})`
+                              : `✨ Following Feed in ${artist.name} (${displayedFanTabPosts.length})`}
+                        </h2>
+                        <span className="mt-[2px] block text-[12px] text-[#666666]">
+                          {feedScope === "all"
+                            ? `Browse all posts or switch to Following to see updates from people you follow`
+                            : `Showing posts from ${followedArtistsInCommunityCount} artists and ${Math.max(
+                                0,
+                                myFollowingList.length -
+                                  followedArtistsInCommunityCount
+                              )} fans you follow`}
+                        </span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowPostComposer((prev) => !prev)}
+                        className="rounded-full bg-[#00cbd5] px-[18px] py-[9px] text-[13px] font-extrabold text-white hover:bg-[#00b8c1]"
+                      >
+                        {showPostComposer ? "Cancel" : "+ Write a Post"}
+                      </button>
+                    </div>
+
+                    {/* Primary Scope Filter Pills & Secondary Sort Pills (Figma Screen 2) */}
+                    <div className="mt-[14px] flex flex-wrap items-center justify-between gap-[10px] border-t border-black/[0.05] pt-[12px]">
+                      <div className="flex flex-wrap items-center gap-[6px]">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFeedScope("all");
+                            setSelectedFollowedAuthorId(null);
+                          }}
+                          className={`rounded-full px-[13px] py-[6px] text-[12px] font-extrabold transition-colors ${
+                            feedScope === "all"
+                              ? "bg-black text-white"
+                              : "bg-[#f2f4f8] text-[#484848] hover:bg-[#e4e7ee]"
+                          }`}
+                        >
+                          All Community Posts
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setFeedScope("following")}
+                          className={`rounded-full px-[13px] py-[6px] text-[12px] font-extrabold transition-colors ${
+                            feedScope === "following"
+                              ? "bg-black text-white"
+                              : "bg-[#dffafb] text-[#008b94] hover:opacity-90"
+                          }`}
+                        >
+                          ✨ Following ({followingPostsInCommunity.length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setFeedScope("followed-artists")}
+                          className={`rounded-full px-[13px] py-[6px] text-[12px] font-extrabold transition-colors ${
+                            feedScope === "followed-artists"
+                              ? "bg-black text-white"
+                              : "bg-[#f2f4f8] text-[#484848] hover:bg-[#e4e7ee]"
+                          }`}
+                        >
+                          🎤 Followed Artists Only
+                        </button>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-[6px]">
                         <button
                           type="button"
                           onClick={() => setFanSortBy("latest")}
-                          className={`rounded-full px-[10px] py-[4px] text-[11px] font-bold ${
+                          className={`rounded-full px-[10px] py-[5px] text-[11px] font-bold ${
                             fanSortBy === "latest"
-                              ? "bg-black text-white"
+                              ? "bg-[#00cbd5] text-white"
                               : "bg-[#f2f4f8] text-[#484848]"
                           }`}
                         >
@@ -2116,136 +2897,385 @@ export function CommunityPageClient({
                         <button
                           type="button"
                           onClick={() => setFanSortBy("popular")}
-                          className={`rounded-full px-[10px] py-[4px] text-[11px] font-bold ${
+                          className={`rounded-full px-[10px] py-[5px] text-[11px] font-bold ${
                             fanSortBy === "popular"
-                              ? "bg-black text-white"
+                              ? "bg-[#00cbd5] text-white"
                               : "bg-[#f2f4f8] text-[#484848]"
                           }`}
                         >
-                          Hot / Popular
+                          Popular
                         </button>
                         <button
                           type="button"
                           onClick={() => setFanHasMediaOnly((prev) => !prev)}
-                          className={`rounded-full px-[10px] py-[4px] text-[11px] font-bold ${
+                          className={`rounded-full px-[10px] py-[5px] text-[11px] font-bold ${
                             fanHasMediaOnly
                               ? "bg-[#00cbd5] text-white"
                               : "bg-[#f2f4f8] text-[#484848]"
                           }`}
                         >
-                          Media Only
+                          📷 Media Only
                         </button>
                       </div>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => setShowPostComposer((prev) => !prev)}
-                      className="rounded-full bg-[#00cbd5] px-[16px] py-[8px] text-[13px] font-bold text-white hover:bg-[#00b8c1]"
-                    >
-                      {showPostComposer ? "Cancel" : "Write a Post"}
-                    </button>
-                  </div>
+                    {/* Followed People Story / Avatar Filter Strip (Figma Screen 2) */}
+                    {myFollowingList.length > 0 && (
+                      <div className="wev-no-scrollbar mt-[14px] flex items-center gap-[14px] overflow-x-auto rounded-[12px] bg-[#f7f8fa] p-[12px]">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedFollowedAuthorId(null)}
+                          className="flex shrink-0 flex-col items-center gap-[4px] bg-transparent p-0"
+                        >
+                          <span
+                            className={`flex h-[42px] w-[42px] items-center justify-center rounded-full text-[11px] font-extrabold text-white ${
+                              selectedFollowedAuthorId == null
+                                ? "bg-black ring-2 ring-[#00cbd5]"
+                                : "bg-[#666666]"
+                            }`}
+                          >
+                            ALL
+                          </span>
+                          <span
+                            className={`text-[10px] ${
+                              selectedFollowedAuthorId == null
+                                ? "font-extrabold text-[#008b94]"
+                                : "font-semibold text-[#484848]"
+                            }`}
+                          >
+                            All ({myFollowingList.length})
+                          </span>
+                        </button>
 
-                  {showPostComposer && (
-                    <form
-                      onSubmit={(e) => void handleCreatePost(e)}
-                      className="mt-[14px] space-y-[10px]"
-                    >
-                      <textarea
-                        rows={3}
-                        value={newPostText}
-                        onChange={(e) => setNewPostText(e.target.value)}
-                        placeholder={`Share a message with ${artist.name} and fellow fans...`}
-                        className="w-full rounded-[12px] border border-[#dcdee4] bg-[#f7f8fa] p-[12px] text-[14px] text-black outline-none focus:border-[#00cbd5]"
-                      />
-
-                      {/* Attached Media Previews */}
-                      {newPostMedia.length > 0 && (
-                        <div className="flex flex-wrap gap-[8px]">
-                          {newPostMedia.map((m, idx) => (
-                            <div
-                              key={`${m.mediaUrl}-${idx}`}
-                              className="relative h-[68px] w-[68px] overflow-hidden rounded-[8px] border border-black/10 bg-[#f2f3f7]"
+                        {myFollowingList.map((followedUser) => {
+                          const isSelected =
+                            selectedFollowedAuthorId === followedUser.userId;
+                          const label =
+                            followedUser.stageName || followedUser.name;
+                          return (
+                            <button
+                              key={`strip-${followedUser.userId}`}
+                              type="button"
+                              onClick={() => {
+                                setSelectedFollowedAuthorId(
+                                  isSelected ? null : followedUser.userId
+                                );
+                                if (feedScope === "all") {
+                                  setFeedScope("following");
+                                }
+                              }}
+                              className="flex shrink-0 flex-col items-center gap-[4px] bg-transparent p-0"
                             >
                               {/* eslint-disable-next-line @next/next/no-img-element */}
                               <img
-                                src={m.mediaUrl}
-                                alt=""
-                                className="h-full w-full object-cover"
-                              />
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setNewPostMedia((prev) =>
-                                    prev.filter((_, i) => i !== idx)
-                                  )
+                                src={
+                                  followedUser.avatar || artist.logoImage
                                 }
-                                className="absolute right-[3px] top-[3px] flex h-[18px] w-[18px] items-center justify-center rounded-full bg-black/75 text-[10px] font-bold text-white"
+                                alt={label}
+                                className={`h-[42px] w-[42px] rounded-full object-cover ${
+                                  isSelected
+                                    ? "ring-2 ring-[#00cbd5]"
+                                    : "opacity-90 hover:opacity-100"
+                                }`}
+                              />
+                              <span
+                                className={`max-w-[68px] truncate text-[10px] ${
+                                  isSelected
+                                    ? "font-extrabold text-[#008b94]"
+                                    : "font-semibold text-[#484848]"
+                                }`}
                               >
-                                ×
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
+                                {label}
+                                {followedUser.verified ? " ✓" : ""}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
 
-                      <div className="flex flex-wrap items-center justify-between gap-[10px]">
-                        <div className="flex flex-wrap items-center gap-[8px]">
-                          <input
-                            ref={fileInputRef}
-                            type="file"
-                            accept="image/*,video/*"
-                            multiple
-                            onChange={(e) => void handleFileUpload(e)}
-                            className="hidden"
-                          />
-                          <button
-                            type="button"
-                            disabled={uploadingMedia}
-                            onClick={() => fileInputRef.current?.click()}
-                            className="rounded-full border border-black/15 bg-white px-[12px] py-[6px] text-[12px] font-bold text-[#222222] hover:bg-[#f7f8fa]"
-                          >
-                            {uploadingMedia
-                              ? "Uploading..."
-                              : "📷 Upload Photo"}
-                          </button>
+                    {showPostComposer && (
+                      <form
+                        onSubmit={(e) => void handleCreatePost(e)}
+                        className="mt-[14px] space-y-[10px]"
+                      >
+                        <textarea
+                          rows={3}
+                          value={newPostText}
+                          onChange={(e) => setNewPostText(e.target.value)}
+                          placeholder={`Share a message with ${artist.name} and fellow fans...`}
+                          className="w-full rounded-[12px] border border-[#dcdee4] bg-[#f7f8fa] p-[12px] text-[14px] text-black outline-none focus:border-[#00cbd5]"
+                        />
 
-                          <div className="flex items-center gap-[4px]">
-                            <input
-                              type="text"
-                              value={imageUrlInput}
-                              onChange={(e) => setImageUrlInput(e.target.value)}
-                              placeholder="Or paste image URL..."
-                              className="h-[32px] w-[180px] rounded-full border border-black/10 bg-white px-[10px] text-[12px] text-black outline-none focus:border-[#00cbd5]"
-                            />
-                            {imageUrlInput.trim() && (
-                              <button
-                                type="button"
-                                onClick={handleAddImageUrl}
-                                className="h-[32px] rounded-full bg-[#f2f4f8] px-[10px] text-[11px] font-bold text-black hover:bg-[#e4e7ee]"
+                        {newPostMedia.length > 0 && (
+                          <div className="flex flex-wrap gap-[8px]">
+                            {newPostMedia.map((m, idx) => (
+                              <div
+                                key={`${m.mediaUrl}-${idx}`}
+                                className="relative h-[68px] w-[68px] overflow-hidden rounded-[8px] border border-black/10 bg-[#f2f3f7]"
                               >
-                                Attach
-                              </button>
-                            )}
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={m.mediaUrl}
+                                  alt=""
+                                  className="h-full w-full object-cover"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setNewPostMedia((prev) =>
+                                      prev.filter((_, i) => i !== idx)
+                                    )
+                                  }
+                                  className="absolute right-[3px] top-[3px] flex h-[18px] w-[18px] items-center justify-center rounded-full bg-black/75 text-[10px] font-bold text-white"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            ))}
                           </div>
-                        </div>
+                        )}
 
+                        <div className="flex flex-wrap items-center justify-between gap-[10px]">
+                          <div className="flex flex-wrap items-center gap-[8px]">
+                            <input
+                              ref={fileInputRef}
+                              type="file"
+                              accept="image/*,video/*"
+                              multiple
+                              onChange={(e) => void handleFileUpload(e)}
+                              className="hidden"
+                            />
+                            <button
+                              type="button"
+                              disabled={uploadingMedia}
+                              onClick={() => fileInputRef.current?.click()}
+                              className="rounded-full border border-black/15 bg-white px-[12px] py-[6px] text-[12px] font-bold text-[#222222] hover:bg-[#f7f8fa]"
+                            >
+                              {uploadingMedia
+                                ? "Uploading..."
+                                : "📷 Upload Photo"}
+                            </button>
+
+                            <div className="flex items-center gap-[4px]">
+                              <input
+                                type="text"
+                                value={imageUrlInput}
+                                onChange={(e) =>
+                                  setImageUrlInput(e.target.value)
+                                }
+                                placeholder="Or paste image URL..."
+                                className="h-[32px] w-[180px] rounded-full border border-black/10 bg-white px-[10px] text-[12px] text-black outline-none focus:border-[#00cbd5]"
+                              />
+                              {imageUrlInput.trim() && (
+                                <button
+                                  type="button"
+                                  onClick={handleAddImageUrl}
+                                  className="h-[32px] rounded-full bg-[#f2f4f8] px-[10px] text-[11px] font-bold text-black hover:bg-[#e4e7ee]"
+                                >
+                                  Attach
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          <button
+                            type="submit"
+                            disabled={publishingPost}
+                            className="rounded-full bg-black px-[20px] py-[8px] text-[13px] font-bold text-white hover:bg-[#282828] disabled:opacity-60"
+                          >
+                            {publishingPost ? "Publishing..." : "Publish Post"}
+                          </button>
+                        </div>
+                      </form>
+                    )}
+                  </div>
+
+                  {displayedFanTabPosts.length === 0 ? (
+                    <div className="wev-community-card p-[36px] text-center">
+                      <strong className="block text-[16px] font-extrabold text-black">
+                        No posts in your Following filter yet
+                      </strong>
+                      <p className="mx-auto mb-0 mt-[6px] max-w-[420px] text-[13px] text-[#666666]">
+                        Follow official {artist.name} members or active fans on
+                        the right panel to populate your personalized Following
+                        Feed!
+                      </p>
+                      <div className="mt-[14px] flex justify-center gap-[8px]">
                         <button
-                          type="submit"
-                          disabled={publishingPost}
-                          className="rounded-full bg-black px-[20px] py-[8px] text-[13px] font-bold text-white hover:bg-[#282828] disabled:opacity-60"
+                          type="button"
+                          onClick={() => void handleFollowAllArtists()}
+                          className="rounded-full bg-[#00cbd5] px-[18px] py-[8px] text-[12px] font-extrabold text-white hover:bg-[#00b8c1]"
                         >
-                          {publishingPost ? "Publishing..." : "Publish Post"}
+                          ✨ Follow All {artist.name} Members
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFeedScope("all");
+                            setSelectedFollowedAuthorId(null);
+                          }}
+                          className="rounded-full bg-[#f2f4f8] px-[16px] py-[8px] text-[12px] font-bold text-[#484848]"
+                        >
+                          Show All Community Posts
                         </button>
                       </div>
-                    </form>
+                    </div>
+                  ) : (
+                    <div className="space-y-[14px]">
+                      {displayedFanTabPosts.map((post) => renderPostCard(post))}
+                    </div>
                   )}
                 </div>
 
-                <div className="space-y-[14px]">
-                  {combinedFanPosts.map((post) => renderPostCard(post))}
-                </div>
+                {/* RIGHT SIDEBAR: My Follow Network & Who to Follow in Community (Figma Screen 2) */}
+                <aside className="space-y-[18px]">
+                  {/* Dark Navy My Follow Network Card */}
+                  <div className="rounded-[16px] bg-[#121c2e] p-[20px] text-white shadow-sm">
+                    <div className="flex items-center justify-between">
+                      <h3 className="m-0 text-[16px] font-extrabold text-white">
+                        👥 My Follow Network
+                      </h3>
+                      <Link
+                        href="/profile"
+                        className="text-[11px] font-bold text-[#00cbd5] no-underline hover:underline"
+                      >
+                        My Profile →
+                      </Link>
+                    </div>
+                    <p className="mb-0 mt-[4px] text-[12px] text-white/75">
+                      Manage your followers and people you follow right from the
+                      community feed.
+                    </p>
+
+                    <div className="mt-[14px] grid grid-cols-3 gap-[8px]">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNetworkModalTab("following");
+                          setNetworkModalOpen(true);
+                        }}
+                        className="rounded-[10px] bg-[#1e2b45] p-[10px] text-left transition-colors hover:bg-[#273758]"
+                      >
+                        <strong className="block text-[18px] font-extrabold text-[#00cbd5]">
+                          {myFollowingList.length}
+                        </strong>
+                        <span className="text-[11px] font-semibold text-white">
+                          Following
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNetworkModalTab("followers");
+                          setNetworkModalOpen(true);
+                        }}
+                        className="rounded-[10px] bg-[#1e2b45] p-[10px] text-left transition-colors hover:bg-[#273758]"
+                      >
+                        <strong className="block text-[18px] font-extrabold text-[#00cbd5]">
+                          {myFollowersList.length}
+                        </strong>
+                        <span className="text-[11px] font-semibold text-white">
+                          Followers
+                        </span>
+                      </button>
+
+                      <div className="rounded-[10px] bg-[#1e2b45] p-[10px]">
+                        <strong className="block text-[18px] font-extrabold text-[#00cbd5]">
+                          {followedArtistsInCommunityCount} /{" "}
+                          {displayMembers.length}
+                        </strong>
+                        <span className="text-[11px] font-semibold text-white">
+                          {artist.name} Artists
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Who to Follow in Community Card */}
+                  <div className="wev-community-card p-[20px]">
+                    <div className="flex items-center justify-between">
+                      <h3 className="m-0 text-[16px] font-extrabold text-black">
+                        ✨ Who to Follow in {artist.name}
+                      </h3>
+                      {!allArtistsFollowed && (
+                        <button
+                          type="button"
+                          onClick={() => void handleFollowAllArtists()}
+                          className="bg-transparent p-0 text-[11px] font-extrabold text-[#008b94] hover:underline"
+                        >
+                          Follow All
+                        </button>
+                      )}
+                    </div>
+                    <p className="mb-0 mt-[2px] text-[12px] text-[#8e8e8e]">
+                      Official artists and active fans you may know
+                    </p>
+
+                    <div className="mt-[12px] space-y-[10px]">
+                      {whoToFollowSuggestions.length === 0 ? (
+                        <p className="m-0 rounded-[10px] bg-[#f7f8fa] p-[14px] text-center text-[12px] text-[#666666]">
+                          You are following all active members in this feed! 🎉
+                        </p>
+                      ) : (
+                        whoToFollowSuggestions.map((sg) => (
+                          <div
+                            key={`suggest-${sg.userId}`}
+                            className="flex items-center justify-between gap-[10px] rounded-[12px] bg-[#f7f8fa] p-[10px]"
+                          >
+                            <Link
+                              href={`/users/${sg.userId}`}
+                              className="flex min-w-0 items-center gap-[10px] text-black no-underline"
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={sg.avatar}
+                                alt={sg.name}
+                                className="h-[36px] w-[36px] shrink-0 rounded-full object-cover"
+                              />
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-[4px]">
+                                  <strong className="truncate text-[13px] font-extrabold text-black hover:underline">
+                                    {sg.name}
+                                  </strong>
+                                  {sg.isArtist ? (
+                                    <span className="rounded-[4px] bg-[#dffafb] px-[5px] py-[1px] text-[8px] font-extrabold text-[#008b94]">
+                                      OFFICIAL ARTIST
+                                    </span>
+                                  ) : sg.followsMe ? (
+                                    <span className="rounded-[4px] bg-[#f3e8ff] px-[5px] py-[1px] text-[8px] font-extrabold text-[#7c3aed]">
+                                      Follows You
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <span className="block truncate text-[11px] text-[#8e8e8e]">
+                                  {sg.subLabel}
+                                </span>
+                              </div>
+                            </Link>
+
+                            <button
+                              type="button"
+                              disabled={togglingFollowIds.includes(sg.userId)}
+                              onClick={() =>
+                                void handleToggleFollowUser(
+                                  sg.userId,
+                                  sg.name,
+                                  sg.avatar,
+                                  sg.isArtist
+                                )
+                              }
+                              className="shrink-0 rounded-full bg-[#00cbd5] px-[12px] py-[5px] text-[11px] font-extrabold text-white hover:bg-[#00b8c1]"
+                            >
+                              {sg.followsMe ? "+ Follow Back" : "+ Follow"}
+                            </button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </aside>
               </div>
             )}
 
@@ -3033,6 +4063,225 @@ export function CommunityPageClient({
             alt="Full resolution preview"
             className="max-h-[86vh] max-w-[92vw] rounded-[12px] object-contain"
           />
+        </div>
+      )}
+
+      {/* My Follow Network Modal (Followers / Following Drawer) */}
+      {networkModalOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Followers and Following"
+          className="fixed inset-0 z-[170] flex items-center justify-center bg-black/50 px-[16px]"
+          onClick={() => setNetworkModalOpen(false)}
+        >
+          <div
+            className="max-h-[85vh] w-full max-w-[460px] overflow-y-auto rounded-[20px] bg-white p-[22px] shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h2 className="m-0 text-[18px] font-extrabold text-black">
+                👥 My Follow Network
+              </h2>
+              <button
+                type="button"
+                onClick={() => setNetworkModalOpen(false)}
+                className="flex h-[32px] w-[32px] items-center justify-center rounded-full text-black hover:bg-black/[0.05]"
+              >
+                <CloseIcon className="h-[18px] w-[18px]" />
+              </button>
+            </div>
+
+            <div className="mt-[12px] flex gap-[8px]">
+              <button
+                type="button"
+                onClick={() => setNetworkModalTab("following")}
+                className={`rounded-full px-[14px] py-[6px] text-[12px] font-bold ${
+                  networkModalTab === "following"
+                    ? "bg-black text-white"
+                    : "bg-[#f2f4f8] text-[#484848]"
+                }`}
+              >
+                Following ({myFollowingList.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setNetworkModalTab("followers")}
+                className={`rounded-full px-[14px] py-[6px] text-[12px] font-bold ${
+                  networkModalTab === "followers"
+                    ? "bg-black text-white"
+                    : "bg-[#f2f4f8] text-[#484848]"
+                }`}
+              >
+                Followers ({myFollowersList.length})
+              </button>
+            </div>
+
+            <div className="mt-[14px] space-y-[8px]">
+              {(networkModalTab === "following"
+                ? myFollowingList
+                : myFollowersList
+              ).length === 0 ? (
+                <p className="m-0 py-[24px] text-center text-[13px] text-[#8e8e8e]">
+                  No users in this list yet.
+                </p>
+              ) : (
+                (networkModalTab === "following"
+                  ? myFollowingList
+                  : myFollowersList
+                ).map((item) => {
+                  const isFlw = followingIdsSet.has(item.userId);
+                  return (
+                    <div
+                      key={`net-modal-${item.userId}`}
+                      className="flex items-center justify-between gap-[10px] rounded-[12px] bg-[#f7f8fa] p-[10px]"
+                    >
+                      <Link
+                        href={`/users/${item.userId}`}
+                        onClick={() => setNetworkModalOpen(false)}
+                        className="flex min-w-0 items-center gap-[10px] text-black no-underline"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={item.avatar || artist.logoImage}
+                          alt={item.stageName || item.name}
+                          className="h-[38px] w-[38px] shrink-0 rounded-full object-cover"
+                        />
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-[4px]">
+                            <strong className="truncate text-[13px] font-bold text-black hover:underline">
+                              {item.stageName || item.name}
+                            </strong>
+                            {item.verified && (
+                              <VerifiedBadgeIcon className="h-[13px] w-[13px] shrink-0" />
+                            )}
+                          </div>
+                          <span className="block text-[11px] text-[#8e8e8e]">
+                            {(item.totalFollower ?? 0).toLocaleString()}{" "}
+                            followers
+                          </span>
+                        </div>
+                      </Link>
+
+                      {item.userId !== user?.id && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void handleToggleFollowUser(
+                              item.userId,
+                              item.stageName || item.name,
+                              item.avatar,
+                              Boolean(item.verified)
+                            )
+                          }
+                          className={`shrink-0 rounded-full px-[12px] py-[5px] text-[11px] font-extrabold ${
+                            isFlw
+                              ? "border border-[#00cbd5] bg-white text-[#008b94] hover:bg-[#fff2f2] hover:text-[#d63333]"
+                              : "bg-[#00cbd5] text-white hover:bg-[#00b8c1]"
+                          }`}
+                        >
+                          {isFlw ? "✓ Following" : "+ Follow"}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* People Who Liked This Post Modal */}
+      {reactorsModalPostId != null && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="People who liked this post"
+          className="fixed inset-0 z-[170] flex items-center justify-center bg-black/50 px-[16px]"
+          onClick={() => setReactorsModalPostId(null)}
+        >
+          <div
+            className="max-h-[80vh] w-full max-w-[420px] overflow-y-auto rounded-[20px] bg-white p-[20px] shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h2 className="m-0 text-[16px] font-extrabold text-black">
+                ❤️ People Who Liked This Post
+              </h2>
+              <button
+                type="button"
+                onClick={() => setReactorsModalPostId(null)}
+                className="flex h-[30px] w-[30px] items-center justify-center rounded-full text-black hover:bg-black/[0.05]"
+              >
+                <CloseIcon className="h-[16px] w-[16px]" />
+              </button>
+            </div>
+
+            <div className="mt-[12px] space-y-[8px]">
+              {loadingReactors ? (
+                <p className="m-0 py-[18px] text-center text-[13px] text-[#8e8e8e]">
+                  Loading...
+                </p>
+              ) : reactorsList.length === 0 ? (
+                <p className="m-0 py-[18px] text-center text-[13px] text-[#8e8e8e]">
+                  No likes yet.
+                </p>
+              ) : (
+                reactorsList.map((r) => {
+                  const isFlw = followingIdsSet.has(r.userId);
+                  return (
+                    <div
+                      key={`reactor-${r.userId}`}
+                      className="flex items-center justify-between gap-[10px] rounded-[12px] bg-[#f7f8fa] p-[10px]"
+                    >
+                      <Link
+                        href={`/users/${r.userId}`}
+                        onClick={() => setReactorsModalPostId(null)}
+                        className="flex min-w-0 items-center gap-[10px] text-black no-underline"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={r.avatar || artist.logoImage}
+                          alt={r.stageName || r.name}
+                          className="h-[36px] w-[36px] shrink-0 rounded-full object-cover"
+                        />
+                        <div className="flex items-center gap-[5px]">
+                          <strong className="truncate text-[13px] font-bold">
+                            {r.stageName || r.name}
+                          </strong>
+                          {r.verified && (
+                            <VerifiedBadgeIcon className="h-[13px] w-[13px]" />
+                          )}
+                        </div>
+                      </Link>
+
+                      {r.userId !== user?.id && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void handleToggleFollowUser(
+                              r.userId,
+                              r.stageName || r.name,
+                              r.avatar,
+                              Boolean(r.verified)
+                            )
+                          }
+                          className={`shrink-0 rounded-full px-[12px] py-[5px] text-[11px] font-extrabold ${
+                            isFlw
+                              ? "border border-[#00cbd5] bg-white text-[#008b94]"
+                              : "bg-[#00cbd5] text-white"
+                          }`}
+                        >
+                          {isFlw ? "✓ Following" : "+ Follow"}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

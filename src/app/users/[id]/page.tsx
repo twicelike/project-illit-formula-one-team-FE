@@ -1,22 +1,26 @@
 import type { Metadata } from "next";
 import { PublicUserProfileClient } from "@/components/sites/weverse/PublicUserProfileClient";
 
+export const dynamic = "force-dynamic";
+
 interface PageProps {
   params: Promise<{ id: string }>;
 }
 
-export async function generateMetadata({
-  params,
-}: PageProps): Promise<Metadata> {
-  const { id } = await params;
+export async function generateMetadata(): Promise<Metadata> {
   return {
-    title: `User Profile #${id} - Weverse`,
-    description: "View public Weverse user and artist profile, followers, and published posts.",
+    title: "Profile - Weverse",
+    description:
+      "View Weverse member and artist profile, followers, and published posts.",
   };
 }
 
 export default async function PublicUserProfilePage({ params }: PageProps) {
   const { id } = await params;
   const numericId = Number(id);
-  return <PublicUserProfileClient userId={Number.isNaN(numericId) ? 0 : numericId} />;
+  return (
+    <PublicUserProfileClient
+      userId={Number.isNaN(numericId) ? 0 : numericId}
+    />
+  );
 }

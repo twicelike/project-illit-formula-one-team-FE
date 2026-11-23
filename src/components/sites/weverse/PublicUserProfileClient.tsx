@@ -318,11 +318,11 @@ export function PublicUserProfileClient({ userId }: { userId: number }) {
         onClose={() => setSearchDrawerOpen(false)}
       />
 
-      {/* Main Content matching Figma Screen 3 */}
+      {/* Main Content */}
       <main className="mx-auto max-w-[1060px] px-[20px] pb-[72px] pt-[80px]">
         {loading ? (
           <div className="rounded-[20px] bg-white p-[40px] text-center text-[14px] text-[#8e8e8e]">
-            Loading public profile...
+            Loading profile...
           </div>
         ) : !publicUser ? (
           <div className="rounded-[20px] bg-white p-[40px] text-center">

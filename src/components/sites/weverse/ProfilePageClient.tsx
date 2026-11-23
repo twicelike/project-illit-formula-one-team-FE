@@ -104,20 +104,20 @@ export function ProfilePageClient() {
     "ALL" | "PUBLIC" | "PRIVATE"
   >("ALL");
 
-  // Edit Personal Profile Form state (PUT /api/v1/users/me)
+  // Edit Personal Profile Form state
   const [editName, setEditName] = useState("");
   const [editAvatar, setEditAvatar] = useState("");
   const [savingProfile, setSavingProfile] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Change Password Form state (PUT /api/v1/users/me/password)
+  // Change Password Form state
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
   const [savingPassword, setSavingPassword] = useState(false);
 
-  // Edit Artist Profile Form state (PUT /api/v1/artists/me)
+  // Edit Artist Profile Form state
   const [artistStageName, setArtistStageName] = useState("");
   const [artistBio, setArtistBio] = useState("");
   const [artistAvatar, setArtistAvatar] = useState("");
@@ -141,13 +141,13 @@ export function ProfilePageClient() {
   const [reactorsList, setReactorsList] = useState<ReactorDto[]>([]);
   const [loadingReactors, setLoadingReactors] = useState(false);
 
-  // Edit Fan Letter state (PUT /api/v1/fan-letters/{id})
+  // Edit Fan Letter state
   const [editingLetter, setEditingLetter] = useState<FanLetterDto | null>(null);
   const [editingLetterContent, setEditingLetterContent] = useState("");
   const [editingLetterPublic, setEditingLetterPublic] = useState(true);
   const [savingLetterEdit, setSavingLetterEdit] = useState(false);
 
-  // Followers & Following Network Modal (GET /api/v1/users/{id}/followers & /following)
+  // Followers & Following Network Modal
   const [followModalOpen, setFollowModalOpen] = useState(false);
   const [followModalTab, setFollowModalTab] = useState<
     "followers" | "following"
